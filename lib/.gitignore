@@ -1,0 +1,15 @@
+# Flutter / Dart build output — do not upload these large folders
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+build/
+# Android Studio and IDE files
+.idea/
+*.iml
+.gradle/
+# macOS junk files
+.DS_Store
+# Our private environment file with Supabase keys
+lib/env.dart
+# Pubspec lock (optional — safe to remove this line if you want)
+# pubspec.lock
