@@ -1,37 +1,23 @@
 import 'package:bcrypt/bcrypt.dart';
-import 'package:flutter/foundation.dart'; // for compute()
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-// ── Top-level functions required by compute() ────────────────
-// compute() runs these in a background isolate so bcrypt
-// never blocks the UI thread and the app doesn't freeze.
-
-String _hashPinIsolate(String pin) {
-  final salt = BCrypt.gensalt(logRounds: 10);
-  return BCrypt.hashpw(pin, salt);
-}
-
-bool _verifyPinIsolate(List<String> args) {
-  // args[0] = plain PIN, args[1] = stored hash
-  return BCrypt.checkpw(args[0], args[1]);
-}
-
-// ── AuthService ───────────────────────────────────────────────
 class AuthService {
   static const String _farmerIdKey = 'farmer_id';
 
-  // Hash PIN in background — UI stays responsive
-  static Future<String> hashPin(String pin) async {
-    return compute(_hashPinIsolate, pin);
+  // logRounds: 4 is fast enough to not freeze (takes ~10ms)
+  // Change back to 10 before releasing to real phones
+  static const int _bcryptRounds = 4;
+
+  static String hashPin(String pin) {
+    final salt = BCrypt.gensalt(logRounds: _bcryptRounds);
+    return BCrypt.hashpw(pin, salt);
   }
 
-  // Verify PIN in background — UI stays responsive
-  static Future<bool> verifyPin(String pin, String storedHash) async {
-    return compute(_verifyPinIsolate, [pin, storedHash]);
+  static bool verifyPin(String pin, String storedHash) {
+    return BCrypt.checkpw(pin, storedHash);
   }
 
-  // Check if a phone number is already registered
   static Future<bool> phoneExists(String phone) async {
     final data = await Supabase.instance.client
         .from('farmers')
@@ -41,7 +27,6 @@ class AuthService {
     return data != null;
   }
 
-  // Register a new farmer
   static Future<String> register({
     required String name,
     required String barangay,
@@ -51,10 +36,8 @@ class AuthService {
     double? latitude,
     double? longitude,
   }) async {
-    // Hash PIN in background isolate — won't freeze the UI
-    final pinHash = await hashPin(pin);
+    final pinHash = hashPin(pin);
 
-    // Insert farmer record into Supabase
     final response = await Supabase.instance.client
         .from('farmers')
         .insert({
@@ -73,8 +56,6 @@ class AuthService {
     await saveLocalFarmerId(farmerId);
     return farmerId;
   }
-
-  // ── LOCAL SESSION ─────────────────────────────────────────
 
   static Future<void> saveLocalFarmerId(String id) async {
     final prefs = await SharedPreferences.getInstance();

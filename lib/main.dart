@@ -35,8 +35,7 @@ class AppShell extends StatefulWidget {
 class _AppShellState extends State<AppShell> {
   int _currentIndex = 0;
 
-  // 4 screens now — added MeScreen
-  static const List<Widget> _screens = [
+  static final List<Widget> _screens = [
     PriceBoard(),
     RoadScreen(),
     SupplyScreen(),
@@ -52,7 +51,7 @@ class _AppShellState extends State<AppShell> {
       selectedItemColor: const Color(0xFF1C3A28),
       unselectedItemColor: Colors.grey,
       selectedLabelStyle: const TextStyle(fontWeight: FontWeight.bold),
-      type: BottomNavigationBarType.fixed, // required for 4+ tabs
+      type: BottomNavigationBarType.fixed,
       items: const [
         BottomNavigationBarItem(icon: Icon(Icons.storefront), label: 'Prices'),
         BottomNavigationBarItem(icon: Icon(Icons.add_road), label: 'Roads'),
