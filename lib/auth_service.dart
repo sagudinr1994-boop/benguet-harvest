@@ -81,4 +81,59 @@ class AuthService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_farmerIdKey);
   }
+  // ── LOGIN ─────────────────────────────────────────────────
+
+  // Find farmer by phone number and verify PIN
+  // Returns farmer map on success, null on failure
+  static Future<Map<String, dynamic>?> login({
+    required String phone,
+    required String pin,
+  }) async {
+    // 1. Look up farmer by phone number
+    final data = await Supabase.instance.client
+        .from('farmers')
+        .select()
+        .eq('phone', phone)
+        .maybeSingle();
+
+    if (data == null) return null; // phone not found
+
+    // 2. Verify the PIN against the stored hash
+    final storedHash = data['pin_hash'] as String? ?? '';
+    final pinOk = verifyPin(pin, storedHash);
+
+    if (!pinOk) return null; // wrong PIN
+
+    // 3. Save the farmer ID locally (same as after registration)
+    await saveLocalFarmerId(data['id'] as String);
+    return data;
+  }
+
+  // ── CHANGE PIN ──────────────────────────────────────────
+
+  // Verify current PIN, then update to new PIN
+  static Future<bool> changePin({
+    required String farmerId,
+    required String currentPin,
+    required String newPin,
+  }) async {
+    // 1. Fetch current hash
+    final data = await Supabase.instance.client
+        .from('farmers')
+        .select('pin_hash')
+        .eq('id', farmerId)
+        .single();
+
+    final storedHash = data['pin_hash'] as String? ?? '';
+    if (!verifyPin(currentPin, storedHash)) return false;
+
+    // 2. Hash the new PIN and update
+    final newHash = hashPin(newPin);
+    await Supabase.instance.client
+        .from('farmers')
+        .update({'pin_hash': newHash})
+        .eq('id', farmerId);
+
+    return true; // success
+  }
 }
