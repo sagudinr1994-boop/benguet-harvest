@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'local_db.dart';
+import 'price_history_screen.dart';
 
 // ── CONSTANTS ────────────────────────────────────────────────
 const List<String> kMarkets = [
@@ -40,6 +43,7 @@ class _PriceBoardState extends State<PriceBoard>
   bool _isStale = false; // true when prices are >24 h old
   String _search = ''; // current search query text
   DateTime? _lastUpdated; // when the newest price was entered
+  bool _isOffline = false; // true when device has no internet
 
   @override
   void initState() {
@@ -54,31 +58,53 @@ class _PriceBoardState extends State<PriceBoard>
     super.dispose();
   }
 
-  // ── LOAD PRICES FROM SUPABASE ────────────────────────────
+  // ── LOAD PRICES (OFFLINE-AWARE) ──────────────────────────
   Future<void> _loadAllPrices() async {
     setState(() => _isLoading = true);
+
+    // Check if device is online
+    final connectivity = await Connectivity().checkConnectivity();
+    final online = connectivity != ConnectivityResult.none;
 
     final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
     final yesterday = DateFormat(
       'yyyy-MM-dd',
     ).format(DateTime.now().subtract(const Duration(days: 1)));
 
-    // Fetch both today and yesterday in parallel (faster)
-    final results = await Future.wait([
-      Supabase.instance.client
-          .from('prices')
-          .select()
-          .eq('date_for', today)
-          .order('crop_name'),
-      Supabase.instance.client
-          .from('prices')
-          .select()
-          .eq('date_for', yesterday)
-          .order('crop_name'),
-    ]);
+    List<Map<String, dynamic>> todayRows = [];
+    List<Map<String, dynamic>> yesterdayRows = [];
 
-    final todayRows = List<Map<String, dynamic>>.from(results[0]);
-    final yesterdayRows = List<Map<String, dynamic>>.from(results[1]);
+    if (online) {
+      // ONLINE: fetch from Supabase, then save to local cache
+      try {
+        final results = await Future.wait([
+          Supabase.instance.client
+              .from('prices')
+              .select()
+              .eq('date_for', today)
+              .order('crop_name'),
+          Supabase.instance.client
+              .from('prices')
+              .select()
+              .eq('date_for', yesterday)
+              .order('crop_name'),
+        ]);
+        todayRows = List<Map<String, dynamic>>.from(results[0]);
+        yesterdayRows = List<Map<String, dynamic>>.from(results[1]);
+
+        // Cache today's prices on device for offline use
+        await LocalDb.cachePrices(todayRows);
+        await LocalDb.cachePrices(yesterdayRows);
+      } catch (e) {
+        // Supabase fetch failed — fall back to cache
+        todayRows = await LocalDb.loadCached(today);
+        yesterdayRows = await LocalDb.loadCached(yesterday);
+      }
+    } else {
+      // OFFLINE: load from device cache
+      todayRows = await LocalDb.loadCached(today);
+      yesterdayRows = await LocalDb.loadCached(yesterday);
+    }
 
     // Group rows by market name
     final todayMap = <String, List<Map<String, dynamic>>>{};
@@ -107,6 +133,7 @@ class _PriceBoardState extends State<PriceBoard>
       // Stale if newest price is more than 24 hours ago
       _isStale =
           newest != null && DateTime.now().difference(newest).inHours > 24;
+      _isOffline = !online;
       _isLoading = false;
     });
   }
@@ -149,6 +176,7 @@ class _PriceBoardState extends State<PriceBoard>
             )
           : Column(
               children: [
+                if (_isOffline) _buildOfflineBanner(),
                 if (_isStale) _buildStaleBanner(),
                 _buildSearchBar(),
                 Expanded(
@@ -159,6 +187,28 @@ class _PriceBoardState extends State<PriceBoard>
                 ),
               ],
             ),
+    );
+  }
+
+  // ── OFFLINE BANNER ────────────────────────────────────────
+  // Blue banner shown when device is offline
+  Widget _buildOfflineBanner() {
+    return Container(
+      width: double.infinity,
+      color: const Color(0xFFDBEAFE), // light blue
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+      child: Row(
+        children: [
+          const Icon(Icons.wifi_off, color: Color(0xFF1D4ED8), size: 18),
+          const SizedBox(width: 8),
+          const Expanded(
+            child: Text(
+              'No internet — showing last saved prices',
+              style: TextStyle(color: Color(0xFF1D4ED8), fontSize: 12),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -265,65 +315,76 @@ class _PriceBoardState extends State<PriceBoard>
       }
     }
 
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      elevation: 1,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        child: Row(
-          children: [
-            // LEFT: crop name + timestamp
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+    return GestureDetector(
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => PriceHistoryScreen(crop: crop, market: market),
+        ),
+      ),
+      child: Card(
+        margin: const EdgeInsets.only(bottom: 8),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        elevation: 1,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          child: Row(
+            children: [
+              // LEFT: crop name + timestamp
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      crop,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                        color: Color(0xFF1C3A28),
+                      ),
+                    ),
+                    if (updated != null)
+                      Text(
+                        'Updated: ${DateFormat("MMM d, h:mm a").format(updated)}',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Colors.grey,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              // RIGHT: price + arrow + change amount
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Text(
-                    crop,
+                    '₱${price.toStringAsFixed(0)}/kg',
                     style: const TextStyle(
+                      fontSize: 20,
                       fontWeight: FontWeight.bold,
-                      fontSize: 16,
-                      color: Color(0xFF1C3A28),
+                      color: Color(0xFF2D5A3D),
                     ),
                   ),
-                  if (updated != null)
-                    Text(
-                      'Updated: ${DateFormat("MMM d, h:mm a").format(updated)}',
-                      style: const TextStyle(fontSize: 11, color: Colors.grey),
+                  if (arrowIcon != null)
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(arrowIcon, color: arrowColor, size: 14),
+                        Text(
+                          changeText,
+                          style: TextStyle(
+                            color: arrowColor,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
                     ),
                 ],
               ),
-            ),
-            // RIGHT: price + arrow + change amount
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(
-                  '₱${price.toStringAsFixed(0)}/kg',
-                  style: const TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF2D5A3D),
-                  ),
-                ),
-                if (arrowIcon != null)
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(arrowIcon, color: arrowColor, size: 14),
-                      Text(
-                        changeText,
-                        style: TextStyle(
-                          color: arrowColor,
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-              ],
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
