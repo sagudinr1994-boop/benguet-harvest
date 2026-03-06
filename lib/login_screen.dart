@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'auth_service.dart';
+import 'biometric_service.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -9,6 +10,8 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
+  bool _biometricAvailable = false;
+  bool _showPinForm = false; // false = try biometric first
   final _phoneCtrl = TextEditingController();
   final _pinCtrl = TextEditingController();
 
@@ -20,6 +23,38 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _isLocked = false;
   int _lockSecondsLeft = 0;
   Timer? _lockTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkAndPromptBiometric(); // fire and don't await
+  }
+
+  // Called when screen opens — try fingerprint immediately if enabled
+  Future<void> _checkAndPromptBiometric() async {
+    final available = await BiometricService.isAvailable();
+    final enabled = await BiometricService.isEnabled();
+
+    setState(() => _biometricAvailable = available);
+
+    if (available && enabled) {
+      // Auto-prompt the fingerprint scanner
+      final ok = await BiometricService.authenticate();
+      if (ok) {
+        // Biometric success — load the local farmer and pop
+        final id = await AuthService.getLocalFarmerId();
+        if (id != null && mounted) {
+          Navigator.of(context).pop('logged_in');
+        }
+      } else {
+        // Biometric failed or cancelled — show PIN form
+        if (mounted) setState(() => _showPinForm = true);
+      }
+    } else {
+      // No biometrics — go straight to PIN form
+      setState(() => _showPinForm = true);
+    }
+  }
 
   @override
   void dispose() {
@@ -118,105 +153,154 @@ class _LoginScreenState extends State<LoginScreen> {
           ),
         ),
       ),
+      // ── D: Switch between biometric wait screen and PIN form ──
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(28),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Icon(
-                Icons.lock_open_outlined,
-                size: 56,
-                color: Color(0xFF2D5A3D),
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                'Welcome back',
-                style: TextStyle(
-                  fontSize: 26,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF1C3A28),
-                ),
-              ),
-              const Text(
-                'Enter your mobile number and PIN.',
-                style: TextStyle(color: Colors.grey),
-              ),
-              const SizedBox(height: 32),
-              // Phone field
-              TextField(
-                controller: _phoneCtrl,
-                keyboardType: TextInputType.phone,
-                enabled: !_isLocked,
-                decoration: const InputDecoration(
-                  labelText: 'Mobile Number',
-                  hintText: '09XXXXXXXXX',
-                  prefixIcon: Icon(Icons.phone_outlined),
-                  border: OutlineInputBorder(),
-                  filled: true,
-                  fillColor: Colors.white,
-                ),
-              ),
-              const SizedBox(height: 16),
-              // PIN field
-              TextField(
-                controller: _pinCtrl,
-                obscureText: true,
-                keyboardType: TextInputType.number,
-                maxLength: 6,
-                enabled: !_isLocked,
-                decoration: const InputDecoration(
-                  labelText: 'PIN',
-                  prefixIcon: Icon(Icons.lock_outline),
-                  border: OutlineInputBorder(),
-                  filled: true,
-                  fillColor: Colors.white,
-                ),
-              ),
-              const SizedBox(height: 8),
-              if (_errorMsg != null)
-                Text(
-                  _errorMsg!,
-                  style: const TextStyle(
-                    color: Color(0xFFDC2626),
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              if (_isLocked)
-                Padding(
-                  padding: const EdgeInsets.only(top: 8),
-                  child: Text(
-                    'Try again in $_lockSecondsLeft seconds...',
-                    style: const TextStyle(
-                      color: Colors.orange,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-              const SizedBox(height: 24),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: _isLocked
-                        ? Colors.grey
-                        : const Color(0xFF1C3A28),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                  ),
-                  onPressed: (_isLoading || _isLocked) ? null : _attemptLogin,
-                  child: _isLoading
-                      ? const CircularProgressIndicator(color: Colors.white)
-                      : _isLocked
-                      ? Text(
-                          'Locked ($_lockSecondsLeft s)',
-                          style: const TextStyle(fontSize: 16),
-                        )
-                      : const Text('Log In', style: TextStyle(fontSize: 16)),
-                ),
-              ),
-            ],
+        child: _showPinForm
+            ? _buildPinForm() // existing form
+            : _buildBiometricWait(), // fingerprint prompt screen
+      ),
+    );
+  }
+
+  // ── D: Extracted PIN form (previously the inline body content) ──
+  Widget _buildPinForm() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(28),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(
+            Icons.lock_open_outlined,
+            size: 56,
+            color: Color(0xFF2D5A3D),
           ),
+          const SizedBox(height: 16),
+          const Text(
+            'Welcome back',
+            style: TextStyle(
+              fontSize: 26,
+              fontWeight: FontWeight.bold,
+              color: Color(0xFF1C3A28),
+            ),
+          ),
+          const Text(
+            'Enter your mobile number and PIN.',
+            style: TextStyle(color: Colors.grey),
+          ),
+          const SizedBox(height: 32),
+          // Phone field
+          TextField(
+            controller: _phoneCtrl,
+            keyboardType: TextInputType.phone,
+            enabled: !_isLocked,
+            decoration: const InputDecoration(
+              labelText: 'Mobile Number',
+              hintText: '09XXXXXXXXX',
+              prefixIcon: Icon(Icons.phone_outlined),
+              border: OutlineInputBorder(),
+              filled: true,
+              fillColor: Colors.white,
+            ),
+          ),
+          const SizedBox(height: 16),
+          // PIN field
+          TextField(
+            controller: _pinCtrl,
+            obscureText: true,
+            keyboardType: TextInputType.number,
+            maxLength: 6,
+            enabled: !_isLocked,
+            decoration: const InputDecoration(
+              labelText: 'PIN',
+              prefixIcon: Icon(Icons.lock_outline),
+              border: OutlineInputBorder(),
+              filled: true,
+              fillColor: Colors.white,
+            ),
+          ),
+          const SizedBox(height: 8),
+          if (_errorMsg != null)
+            Text(
+              _errorMsg!,
+              style: const TextStyle(
+                color: Color(0xFFDC2626),
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          if (_isLocked)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                'Try again in $_lockSecondsLeft seconds...',
+                style: const TextStyle(
+                  color: Colors.orange,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          const SizedBox(height: 24),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _isLocked
+                    ? Colors.grey
+                    : const Color(0xFF1C3A28),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 16),
+              ),
+              onPressed: (_isLoading || _isLocked) ? null : _attemptLogin,
+              child: _isLoading
+                  ? const CircularProgressIndicator(color: Colors.white)
+                  : _isLocked
+                  ? Text(
+                      'Locked ($_lockSecondsLeft s)',
+                      style: const TextStyle(fontSize: 16),
+                    )
+                  : const Text('Log In', style: TextStyle(fontSize: 16)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── E: Shown while biometric prompt is active / loading ──
+  Widget _buildBiometricWait() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(40),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.fingerprint, size: 96, color: Color(0xFF2D5A3D)),
+            const SizedBox(height: 24),
+            const Text(
+              'Touch the fingerprint sensor',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFF1C3A28),
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'to log in to Benguet Harvest',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.grey),
+            ),
+            const SizedBox(height: 40),
+            // Manual fallback button
+            TextButton.icon(
+              icon: const Icon(Icons.pin, color: Color(0xFF2D5A3D)),
+              label: const Text(
+                'Use PIN instead',
+                style: TextStyle(color: Color(0xFF2D5A3D)),
+              ),
+              onPressed: () => setState(() => _showPinForm = true),
+            ),
+          ],
         ),
       ),
     );

@@ -5,6 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'auth_service.dart';
 import 'register_screen.dart';
 import 'login_screen.dart';
+import 'biometric_service.dart';
 
 class MeScreen extends StatefulWidget {
   const MeScreen({super.key});
@@ -16,6 +17,8 @@ class _MeScreenState extends State<MeScreen> {
   Map<String, dynamic>? _farmer;
   List<Map<String, dynamic>> _myReports = [];
   bool _loading = true;
+  bool _biometricAvailable = false;
+  bool _biometricEnabled = false;
 
   @override
   void initState() {
@@ -24,7 +27,6 @@ class _MeScreenState extends State<MeScreen> {
   }
 
   Future<void> _reload() async {
-    setState(() => _loading = true);
     final farmer = await AuthService.getLocalFarmer();
     List<Map<String, dynamic>> reports = [];
     if (farmer != null) {
@@ -38,9 +40,15 @@ class _MeScreenState extends State<MeScreen> {
         reports = List<Map<String, dynamic>>.from(data);
       } catch (_) {} // offline — just skip reports
     }
+
+    final bioAvailable = await BiometricService.isAvailable();
+    final bioEnabled = await BiometricService.isEnabled();
+
     setState(() {
       _farmer = farmer;
       _myReports = reports;
+      _biometricAvailable = bioAvailable; // ← new
+      _biometricEnabled = bioEnabled; // ← new
       _loading = false;
     });
   }
@@ -177,6 +185,9 @@ class _MeScreenState extends State<MeScreen> {
           const SizedBox(height: 12),
           _activityCard(),
           const SizedBox(height: 12),
+          // Only show if device has biometric hardware
+          if (_biometricAvailable) _biometricTile(),
+          if (_biometricAvailable) const SizedBox(height: 4),
           _changePinTile(farmerId),
           const SizedBox(height: 4),
           _logOutTile(),
@@ -391,6 +402,33 @@ class _MeScreenState extends State<MeScreen> {
     );
   }
 
+  // Biometric toggle tile — only shown if device supports it
+  Widget _biometricTile() {
+    return Card(
+      child: SwitchListTile(
+        secondary: const Icon(Icons.fingerprint, color: Color(0xFF2D5A3D)),
+        title: const Text('Fingerprint Login'),
+        subtitle: Text(
+          _biometricEnabled
+              ? 'Tap your fingerprint to log in'
+              : 'Enable to log in with your fingerprint',
+          style: const TextStyle(fontSize: 12),
+        ),
+        value: _biometricEnabled,
+        activeColor: const Color(0xFF2D5A3D),
+        onChanged: (val) async {
+          if (val) {
+            // Turning ON — run a test auth first
+            final ok = await BiometricService.authenticate();
+            if (!ok) return; // user cancelled or failed — don't enable
+          }
+          await BiometricService.setEnabled(val);
+          setState(() => _biometricEnabled = val);
+        },
+      ),
+    );
+  }
+
   Widget _changePinTile(String farmerId) {
     return Card(
       child: ListTile(
@@ -433,6 +471,7 @@ class _MeScreenState extends State<MeScreen> {
           );
           if (confirm == true) {
             await AuthService.logOut();
+            await BiometricService.clear(); // remove fingerprint preference
             _reload();
           }
         },
