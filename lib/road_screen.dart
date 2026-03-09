@@ -293,9 +293,9 @@ class _RoadScreenState extends State<RoadScreen> {
     String timeLabel = '';
     if (ts != null) {
       final diff = DateTime.now().difference(ts);
-      if (diff.inMinutes < 1)
+      if (diff.inMinutes < 1) {
         timeLabel = 'just now';
-      else if (diff.inHours < 1)
+      } else if (diff.inHours < 1)
         timeLabel = '${diff.inMinutes}m ago';
       else if (diff.inHours < 24)
         timeLabel = '${diff.inHours}h ago';
@@ -669,7 +669,7 @@ class _RoadScreenState extends State<RoadScreen> {
                     style: TextStyle(fontWeight: FontWeight.bold),
                   ),
                   DropdownButtonFormField<String>(
-                    value: selectedRoad,
+                    initialValue: selectedRoad,
                     items: kRoads
                         .map((r) => DropdownMenuItem(value: r, child: Text(r)))
                         .toList(),

@@ -10,50 +10,27 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  bool _biometricAvailable = false;
-  bool _showPinForm = false; // false = try biometric first
   final _phoneCtrl = TextEditingController();
-  final _pinCtrl = TextEditingController();
+  final _pinCtrl   = TextEditingController();
 
-  bool _isLoading = false;
+  bool    _isLoading       = false;
   String? _errorMsg;
 
-  // Rate-limiting: track failed attempts
-  int _failedAttempts = 0;
-  bool _isLocked = false;
-  int _lockSecondsLeft = 0;
+  // Rate-limiting
+  int    _failedAttempts  = 0;
+  bool   _isLocked        = false;
+  int    _lockSecondsLeft = 0;
   Timer? _lockTimer;
+
+  // Biometric
+  bool _biometricAvailable = false;
+  bool _hasSavedFarmer     = false;  // true if farmer ever logged in before
+  bool _showPinForm        = false;
 
   @override
   void initState() {
     super.initState();
-    _checkAndPromptBiometric(); // fire and don't await
-  }
-
-  // Called when screen opens — try fingerprint immediately if enabled
-  Future<void> _checkAndPromptBiometric() async {
-    final available = await BiometricService.isAvailable();
-    final enabled = await BiometricService.isEnabled();
-
-    setState(() => _biometricAvailable = available);
-
-    if (available && enabled) {
-      // Auto-prompt the fingerprint scanner
-      final ok = await BiometricService.authenticate();
-      if (ok) {
-        // Biometric success — load the local farmer and pop
-        final id = await AuthService.getLocalFarmerId();
-        if (id != null && mounted) {
-          Navigator.of(context).pop('logged_in');
-        }
-      } else {
-        // Biometric failed or cancelled — show PIN form
-        if (mounted) setState(() => _showPinForm = true);
-      }
-    } else {
-      // No biometrics — go straight to PIN form
-      setState(() => _showPinForm = true);
-    }
+    _checkAndPromptBiometric();
   }
 
   @override
@@ -64,33 +41,60 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  // Start a 30-second lockout after 3 failed attempts
+  // ── BIOMETRIC ─────────────────────────────────────────────
+
+  Future<void> _checkAndPromptBiometric() async {
+    final available  = await BiometricService.isAvailable();
+    final savedId    = await AuthService.getSavedFarmerId(); // survives logout
+
+    if (!mounted) return;
+    setState(() {
+      _biometricAvailable = available;
+      _hasSavedFarmer     = savedId != null;
+    });
+
+    // Auto-prompt only if device supports biometrics AND farmer was seen before
+    if (available && savedId != null) {
+      final ok = await BiometricService.authenticate();
+      if (ok) {
+        final success = await AuthService.biometricLogin();
+        if (success && mounted) {
+          Navigator.of(context).pop('logged_in');
+          return;
+        }
+      }
+    }
+
+    if (mounted) setState(() => _showPinForm = true);
+  }
+
+  // ── RATE LIMITING ─────────────────────────────────────────
+
   void _startLockout() {
     setState(() {
-      _isLocked = true;
+      _isLocked        = true;
       _lockSecondsLeft = 30;
     });
     _lockTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (!mounted) {
-        timer.cancel();
-        return;
-      }
+      if (!mounted) { timer.cancel(); return; }
       setState(() => _lockSecondsLeft--);
       if (_lockSecondsLeft <= 0) {
         timer.cancel();
         setState(() {
-          _isLocked = false;
-          _failedAttempts = 0; // reset after cooldown
+          _isLocked       = false;
+          _failedAttempts = 0;
         });
       }
     });
   }
 
+  // ── PIN LOGIN ─────────────────────────────────────────────
+
   Future<void> _attemptLogin() async {
     if (_isLocked) return;
 
     final phone = _phoneCtrl.text.trim();
-    final pin = _pinCtrl.text.trim();
+    final pin   = _pinCtrl.text.trim();
 
     if (phone.length < 11) {
       setState(() => _errorMsg = 'Enter your 11-digit mobile number.');
@@ -101,31 +105,25 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
 
-    setState(() {
-      _isLoading = true;
-      _errorMsg = null;
-    });
+    setState(() { _isLoading = true; _errorMsg = null; });
 
     try {
       final farmer = await AuthService.login(phone: phone, pin: pin);
 
       if (farmer != null) {
-        // Success — pop back with result
         if (mounted) Navigator.of(context).pop('logged_in');
       } else {
-        // Wrong phone or PIN
         _failedAttempts++;
         if (_failedAttempts >= 3) {
           _startLockout();
           setState(() {
             _isLoading = false;
-            _errorMsg = 'Too many attempts. Wait 30 seconds.';
+            _errorMsg  = 'Too many attempts. Wait 30 seconds.';
           });
         } else {
           setState(() {
             _isLoading = false;
-            _errorMsg =
-                'Incorrect phone number or PIN. '
+            _errorMsg  = 'Incorrect phone number or PIN. '
                 '${3 - _failedAttempts} attempt(s) remaining.';
           });
         }
@@ -133,10 +131,36 @@ class _LoginScreenState extends State<LoginScreen> {
     } catch (e) {
       setState(() {
         _isLoading = false;
-        _errorMsg = 'Connection error. Check internet and try again.';
+        _errorMsg  = 'Connection error. Check internet and try again.';
       });
     }
   }
+
+  // ── BIOMETRIC BUTTON ACTION ───────────────────────────────
+
+  Future<void> _tryBiometric() async {
+    setState(() => _errorMsg = null);
+
+    if (!_hasSavedFarmer) {
+      setState(() =>
+        _errorMsg = 'Please log in with PIN first to enable biometrics.');
+      return;
+    }
+
+    final ok = await BiometricService.authenticate();
+    if (ok) {
+      final success = await AuthService.biometricLogin();
+      if (success && mounted) {
+        Navigator.of(context).pop('logged_in');
+      } else if (mounted) {
+        setState(() => _errorMsg = 'Could not restore session. Try PIN.');
+      }
+    } else if (mounted) {
+      setState(() => _errorMsg = 'Biometric not recognised. Try your PIN.');
+    }
+  }
+
+  // ── BUILD ─────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -145,49 +169,67 @@ class _LoginScreenState extends State<LoginScreen> {
       appBar: AppBar(
         backgroundColor: const Color(0xFF1C3A28),
         iconTheme: const IconThemeData(color: Color(0xFFE8B84B)),
-        title: const Text(
-          'Log In',
+        title: const Text('Log In',
           style: TextStyle(
             color: Color(0xFFE8B84B),
-            fontWeight: FontWeight.bold,
-          ),
-        ),
+            fontWeight: FontWeight.bold)),
       ),
-      // ── D: Switch between biometric wait screen and PIN form ──
       body: SafeArea(
         child: _showPinForm
-            ? _buildPinForm() // existing form
-            : _buildBiometricWait(), // fingerprint prompt screen
+            ? _buildPinForm()
+            : _buildBiometricWait(),
       ),
     );
   }
 
-  // ── D: Extracted PIN form (previously the inline body content) ──
+  // ── FINGERPRINT WAITING SCREEN ────────────────────────────
+
+  Widget _buildBiometricWait() {
+    return Center(child: Padding(
+      padding: const EdgeInsets.all(40),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        const Icon(Icons.fingerprint, size: 96, color: Color(0xFF2D5A3D)),
+        const SizedBox(height: 24),
+        const Text('Touch the fingerprint sensor',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF1C3A28))),
+        const SizedBox(height: 8),
+        const Text('or use Face ID to log in',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: Colors.grey)),
+        const SizedBox(height: 40),
+        TextButton.icon(
+          icon: const Icon(Icons.pin, color: Color(0xFF2D5A3D)),
+          label: const Text('Use PIN instead',
+            style: TextStyle(color: Color(0xFF2D5A3D))),
+          onPressed: () => setState(() => _showPinForm = true),
+        ),
+      ]),
+    ));
+  }
+
+  // ── PIN FORM ──────────────────────────────────────────────
+
   Widget _buildPinForm() {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(28),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(
-            Icons.lock_open_outlined,
-            size: 56,
-            color: Color(0xFF2D5A3D),
-          ),
+          const Icon(Icons.lock_open_outlined,
+            size: 56, color: Color(0xFF2D5A3D)),
           const SizedBox(height: 16),
-          const Text(
-            'Welcome back',
+          const Text('Welcome back',
             style: TextStyle(
               fontSize: 26,
               fontWeight: FontWeight.bold,
-              color: Color(0xFF1C3A28),
-            ),
-          ),
-          const Text(
-            'Enter your mobile number and PIN.',
-            style: TextStyle(color: Colors.grey),
-          ),
+              color: Color(0xFF1C3A28))),
+          const Text('Enter your mobile number and PIN.',
+            style: TextStyle(color: Colors.grey)),
           const SizedBox(height: 32),
+
           // Phone field
           TextField(
             controller: _phoneCtrl,
@@ -203,6 +245,7 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
           ),
           const SizedBox(height: 16),
+
           // PIN field
           TextField(
             controller: _pinCtrl,
@@ -219,14 +262,15 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
           ),
           const SizedBox(height: 8),
+
+          // Error message
           if (_errorMsg != null)
-            Text(
-              _errorMsg!,
+            Text(_errorMsg!,
               style: const TextStyle(
                 color: Color(0xFFDC2626),
-                fontWeight: FontWeight.bold,
-              ),
-            ),
+                fontWeight: FontWeight.bold)),
+
+          // Lockout countdown
           if (_isLocked)
             Padding(
               padding: const EdgeInsets.only(top: 8),
@@ -234,13 +278,31 @@ class _LoginScreenState extends State<LoginScreen> {
                 'Try again in $_lockSecondsLeft seconds...',
                 style: const TextStyle(
                   color: Colors.orange,
-                  fontWeight: FontWeight.bold,
+                  fontWeight: FontWeight.bold)),
+            ),
+
+          const SizedBox(height: 24),
+
+          // Biometric button — shown when hardware available
+          if (_biometricAvailable) ...[
+            SizedBox(width: double.infinity,
+              child: OutlinedButton.icon(
+                icon: const Icon(Icons.fingerprint,
+                  color: Color(0xFF2D5A3D)),
+                label: const Text('Use Fingerprint / Face ID',
+                  style: TextStyle(color: Color(0xFF2D5A3D))),
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: Color(0xFF2D5A3D)),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
                 ),
+                onPressed: _tryBiometric,
               ),
             ),
-          const SizedBox(height: 24),
-          SizedBox(
-            width: double.infinity,
+            const SizedBox(height: 12),
+          ],
+
+          // Log In button
+          SizedBox(width: double.infinity,
             child: ElevatedButton(
               style: ElevatedButton.styleFrom(
                 backgroundColor: _isLocked
@@ -253,55 +315,13 @@ class _LoginScreenState extends State<LoginScreen> {
               child: _isLoading
                   ? const CircularProgressIndicator(color: Colors.white)
                   : _isLocked
-                  ? Text(
-                      'Locked ($_lockSecondsLeft s)',
-                      style: const TextStyle(fontSize: 16),
-                    )
-                  : const Text('Log In', style: TextStyle(fontSize: 16)),
+                      ? Text('Locked ($_lockSecondsLeft s)',
+                          style: const TextStyle(fontSize: 16))
+                      : const Text('Log In',
+                          style: TextStyle(fontSize: 16)),
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  // ── E: Shown while biometric prompt is active / loading ──
-  Widget _buildBiometricWait() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(40),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.fingerprint, size: 96, color: Color(0xFF2D5A3D)),
-            const SizedBox(height: 24),
-            const Text(
-              'Touch the fingerprint sensor',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: Color(0xFF1C3A28),
-              ),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'to log in to Benguet Harvest',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.grey),
-            ),
-            const SizedBox(height: 40),
-            // Manual fallback button
-            TextButton.icon(
-              icon: const Icon(Icons.pin, color: Color(0xFF2D5A3D)),
-              label: const Text(
-                'Use PIN instead',
-                style: TextStyle(color: Color(0xFF2D5A3D)),
-              ),
-              onPressed: () => setState(() => _showPinForm = true),
-            ),
-          ],
-        ),
       ),
     );
   }

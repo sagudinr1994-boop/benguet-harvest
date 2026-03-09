@@ -180,9 +180,9 @@ class _SupplyScreenState extends State<SupplyScreen> {
       final diff = dt
           .difference(DateTime(today.year, today.month, today.day))
           .inDays;
-      if (diff == 0)
+      if (diff == 0) {
         label = 'Today';
-      else if (diff == 1)
+      } else if (diff == 1)
         label = 'Tomorrow';
       else
         label = DateFormat('EEEE, MMM d').format(dt);
@@ -222,9 +222,9 @@ class _SupplyScreenState extends State<SupplyScreen> {
     String timeLabel = '';
     if (ts != null) {
       final diff = DateTime.now().difference(ts);
-      if (diff.inMinutes < 1)
+      if (diff.inMinutes < 1) {
         timeLabel = 'just now';
-      else if (diff.inHours < 1)
+      } else if (diff.inHours < 1)
         timeLabel = '${diff.inMinutes}m ago';
       else if (diff.inHours < 24)
         timeLabel = '${diff.inHours}h ago';
@@ -235,7 +235,7 @@ class _SupplyScreenState extends State<SupplyScreen> {
     // Quantity string — only show if quantity > 0
     final hasQty = quantity != null && (quantity as num) > 0;
     final qtyLabel = hasQty
-        ? '${(quantity as num).toStringAsFixed(quantity % 1 == 0 ? 0 : 1)} $unit'
+        ? '${(quantity).toStringAsFixed(quantity % 1 == 0 ? 0 : 1)} $unit'
         : '';
 
     return Card(
@@ -369,7 +369,7 @@ class _SupplyScreenState extends State<SupplyScreen> {
                   style: TextStyle(fontWeight: FontWeight.bold),
                 ),
                 DropdownButtonFormField<String>(
-                  value: selectedCrop,
+                  initialValue: selectedCrop,
                   items: kCrops
                       .map((c) => DropdownMenuItem(value: c, child: Text(c)))
                       .toList(),
@@ -383,7 +383,7 @@ class _SupplyScreenState extends State<SupplyScreen> {
                   style: TextStyle(fontWeight: FontWeight.bold),
                 ),
                 DropdownButtonFormField<String>(
-                  value: selectedMarket,
+                  initialValue: selectedMarket,
                   items: kSupplyMarkets
                       .map((m) => DropdownMenuItem(value: m, child: Text(m)))
                       .toList(),
@@ -460,8 +460,9 @@ class _SupplyScreenState extends State<SupplyScreen> {
                       firstDate: DateTime.now(),
                       lastDate: DateTime.now().add(const Duration(days: 14)),
                     );
-                    if (picked != null)
+                    if (picked != null) {
                       setModalState(() => plannedFor = picked);
+                    }
                   },
                   child: Text(
                     DateFormat('MMM d, yyyy').format(plannedFor),

@@ -5,6 +5,7 @@ import 'price_board.dart';
 import 'road_screen.dart';
 import 'supply_screen.dart';
 import 'me_screen.dart';
+import 'map_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -35,11 +36,13 @@ class AppShell extends StatefulWidget {
 class _AppShellState extends State<AppShell> {
   int _currentIndex = 0;
 
-  static final List<Widget> _screens = [
+  // 5 screens — Map added as 5th
+  static const List<Widget> _screens = [
     PriceBoard(),
     RoadScreen(),
     SupplyScreen(),
     MeScreen(),
+    MapScreen(),
   ];
 
   @override
@@ -57,6 +60,7 @@ class _AppShellState extends State<AppShell> {
         BottomNavigationBarItem(icon: Icon(Icons.add_road), label: 'Roads'),
         BottomNavigationBarItem(icon: Icon(Icons.agriculture), label: 'Supply'),
         BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Me'),
+        BottomNavigationBarItem(icon: Icon(Icons.map_outlined), label: 'Map'),
       ],
     ),
   );

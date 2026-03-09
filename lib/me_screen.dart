@@ -18,7 +18,6 @@ class _MeScreenState extends State<MeScreen> {
   List<Map<String, dynamic>> _myReports = [];
   bool _loading = true;
   bool _biometricAvailable = false;
-  bool _biometricEnabled = false;
 
   @override
   void initState() {
@@ -30,7 +29,6 @@ class _MeScreenState extends State<MeScreen> {
     final farmer = await AuthService.getLocalFarmer();
     List<Map<String, dynamic>> reports = [];
     if (farmer != null) {
-      // Load the last 5 supply reports this farmer submitted
       try {
         final data = await Supabase.instance.client
             .from('supply_reports')
@@ -38,17 +36,15 @@ class _MeScreenState extends State<MeScreen> {
             .order('reported_at', ascending: false)
             .limit(5);
         reports = List<Map<String, dynamic>>.from(data);
-      } catch (_) {} // offline — just skip reports
+      } catch (_) {}
     }
 
     final bioAvailable = await BiometricService.isAvailable();
-    final bioEnabled = await BiometricService.isEnabled();
 
     setState(() {
       _farmer = farmer;
       _myReports = reports;
-      _biometricAvailable = bioAvailable; // ← new
-      _biometricEnabled = bioEnabled; // ← new
+      _biometricAvailable = bioAvailable;
       _loading = false;
     });
   }
@@ -110,7 +106,6 @@ class _MeScreenState extends State<MeScreen> {
               style: TextStyle(color: Colors.grey, fontSize: 15),
             ),
             const SizedBox(height: 32),
-            // Register button
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
@@ -134,7 +129,6 @@ class _MeScreenState extends State<MeScreen> {
               ),
             ),
             const SizedBox(height: 12),
-            // Log in button (for returning farmers)
             SizedBox(
               width: double.infinity,
               child: OutlinedButton.icon(
@@ -185,8 +179,7 @@ class _MeScreenState extends State<MeScreen> {
           const SizedBox(height: 12),
           _activityCard(),
           const SizedBox(height: 12),
-          // Only show if device has biometric hardware
-          if (_biometricAvailable) _biometricTile(),
+          if (_biometricAvailable) _biometricInfoTile(),
           if (_biometricAvailable) const SizedBox(height: 4),
           _changePinTile(farmerId),
           const SizedBox(height: 4),
@@ -402,29 +395,18 @@ class _MeScreenState extends State<MeScreen> {
     );
   }
 
-  // Biometric toggle tile — only shown if device supports it
-  Widget _biometricTile() {
+  // ── BIOMETRIC INFO TILE ───────────────────────────────────
+  // No toggle needed — biometric is always active when hardware is available
+  Widget _biometricInfoTile() {
     return Card(
-      child: SwitchListTile(
-        secondary: const Icon(Icons.fingerprint, color: Color(0xFF2D5A3D)),
-        title: const Text('Fingerprint Login'),
-        subtitle: Text(
-          _biometricEnabled
-              ? 'Tap your fingerprint to log in'
-              : 'Enable to log in with your fingerprint',
-          style: const TextStyle(fontSize: 12),
+      child: ListTile(
+        leading: const Icon(Icons.fingerprint, color: Color(0xFF2D5A3D)),
+        title: const Text('Fingerprint / Face ID'),
+        subtitle: const Text(
+          'Active — use biometrics on the login screen',
+          style: TextStyle(fontSize: 12, color: Colors.grey),
         ),
-        value: _biometricEnabled,
-        activeColor: const Color(0xFF2D5A3D),
-        onChanged: (val) async {
-          if (val) {
-            // Turning ON — run a test auth first
-            final ok = await BiometricService.authenticate();
-            if (!ok) return; // user cancelled or failed — don't enable
-          }
-          await BiometricService.setEnabled(val);
-          setState(() => _biometricEnabled = val);
-        },
+        trailing: const Icon(Icons.check_circle, color: Color(0xFF2D5A3D)),
       ),
     );
   }
@@ -471,7 +453,8 @@ class _MeScreenState extends State<MeScreen> {
           );
           if (confirm == true) {
             await AuthService.logOut();
-            await BiometricService.clear(); // remove fingerprint preference
+            // NOTE: biometric preference is NOT cleared on logout —
+            // the device hardware is always available for next login
             _reload();
           }
         },

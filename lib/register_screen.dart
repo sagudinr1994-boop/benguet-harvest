@@ -189,7 +189,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         ),
         const SizedBox(height: 20),
         DropdownButtonFormField<String>(
-          value: _barangay,
+          initialValue: _barangay,
           decoration: const InputDecoration(
             labelText: 'Barangay / Municipality',
             border: OutlineInputBorder(),
@@ -267,10 +267,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
               label: Text(crop),
               selected: selected,
               onSelected: (v) => setState(() {
-                if (v)
+                if (v) {
                   _selectedCrops.add(crop);
-                else
+                } else {
                   _selectedCrops.remove(crop);
+                }
               }),
               selectedColor: const Color(0xFF2D5A3D).withOpacity(0.2),
               checkmarkColor: const Color(0xFF1C3A28),
