@@ -6,4 +6,7 @@ class Env {
   static const String supabaseUrl = 'https://cptkhiadaknvkjnhbutq.supabase.co';
   static const String supabaseKey =
       'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNwdGtoaWFkYWtudmtqbmhidXRxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI1MzAyNzUsImV4cCI6MjA4ODEwNjI3NX0.A0wcOqiDtPsuVFdKUuconIV8gXl5uHno2_50Lz5a4Ng';
+
+  // Get a FREE key at https://openweathermap.org/api → Current Weather Data (free tier)
+  static const String weatherKey = 'YOUR_OPENWEATHERMAP_API_KEY';
 }

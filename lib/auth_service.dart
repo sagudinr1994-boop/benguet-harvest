@@ -3,8 +3,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class AuthService {
-  static const String _farmerIdKey  = 'farmer_id';
-  static const String _loggedInKey  = 'logged_in';  // separate session flag
+  static const String _farmerIdKey = 'farmer_id';
+  static const String _loggedInKey = 'logged_in';
+  static const String _roleKey = 'farmer_role';
 
   static const int _bcryptRounds = 4;
 
@@ -86,14 +87,22 @@ class AuthService {
         .maybeSingle();
   }
 
+  // Get the logged-in farmer's role
+  static Future<String> getLocalRole() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_roleKey) ?? 'farmer';
+  }
+
   static Future<void> _setLoggedIn(bool value) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_loggedInKey, value);
   }
 
-  // Logout: clears session flag but KEEPS farmer ID so biometrics still work
+  // Logout: clears session flag and role, but KEEPS farmer ID so biometrics still work
   static Future<void> logOut() async {
+    final prefs = await SharedPreferences.getInstance();
     await _setLoggedIn(false);
+    await prefs.remove(_roleKey);
     // farmer_id is intentionally kept — biometric login needs it
   }
 
@@ -115,17 +124,35 @@ class AuthService {
     final pinOk = verifyPin(pin, storedHash);
     if (!pinOk) return null;
 
+    final prefs = await SharedPreferences.getInstance();
     await saveLocalFarmerId(data['id'] as String);
+    await prefs.setString(_roleKey, data['role'] as String? ?? 'farmer');
     await _setLoggedIn(true);
     return data;
   }
 
   // ── BIOMETRIC LOGIN ───────────────────────────────────────
 
-  // Called after successful biometric auth — restores the session
+  // Called after successful biometric auth — restores the session and role
   static Future<bool> biometricLogin() async {
     final id = await getSavedFarmerId();
     if (id == null) return false;
+
+    // Re-fetch role from Supabase so encoder/admin access is restored
+    try {
+      final data = await Supabase.instance.client
+          .from('farmers')
+          .select('role')
+          .eq('id', id)
+          .maybeSingle();
+      if (data != null) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(_roleKey, data['role'] as String? ?? 'farmer');
+      }
+    } catch (_) {
+      // If offline, role stays as whatever was last cached (default: farmer)
+    }
+
     await _setLoggedIn(true);
     return true;
   }

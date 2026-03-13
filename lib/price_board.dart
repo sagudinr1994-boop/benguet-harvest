@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'app_config.dart';
 import 'local_db.dart';
 import 'price_history_screen.dart';
+import 'weather_service.dart';
 
 // ── CONSTANTS ────────────────────────────────────────────────
 const List<String> kMarkets = [
@@ -44,17 +46,38 @@ class _PriceBoardState extends State<PriceBoard>
   String _search = ''; // current search query text
   DateTime? _lastUpdated; // when the newest price was entered
   bool _isOffline = false; // true when device has no internet
+  Map<String, dynamic>? _weather; // OpenWeatherMap response
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: kMarkets.length, vsync: this);
+    _tabController = TabController(
+      length: AppConfig.instance.markets.length,
+      vsync: this,
+    );
+    AppConfig.instance.addListener(_onConfigChanged);
     _loadAllPrices();
+    _loadWeather();
+  }
+
+  void _onConfigChanged() {
+    final newLen = AppConfig.instance.markets.length;
+    if (newLen != _tabController.length) {
+      _tabController.dispose();
+      _tabController = TabController(length: newLen, vsync: this);
+    }
+    setState(() {});
+  }
+
+  Future<void> _loadWeather() async {
+    final w = await WeatherService.fetchBaguio();
+    if (mounted) setState(() => _weather = w);
   }
 
   @override
   void dispose() {
-    _tabController.dispose(); // clean up the tab controller
+    AppConfig.instance.removeListener(_onConfigChanged);
+    _tabController.dispose();
     super.dispose();
   }
 
@@ -63,8 +86,8 @@ class _PriceBoardState extends State<PriceBoard>
     setState(() => _isLoading = true);
 
     // Check if device is online
-    final connectivity = await Connectivity().checkConnectivity();
-    final online = connectivity != ConnectivityResult.none;
+    final connectivityList = await Connectivity().checkConnectivity();
+    final online = connectivityList.any((r) => r != ConnectivityResult.none);
 
     final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
     final yesterday = DateFormat(
@@ -82,11 +105,13 @@ class _PriceBoardState extends State<PriceBoard>
               .from('prices')
               .select()
               .eq('date_for', today)
+              .or('status.eq.published,status.is.null')
               .order('crop_name'),
           Supabase.instance.client
               .from('prices')
               .select()
               .eq('date_for', yesterday)
+              .or('status.eq.published,status.is.null')
               .order('crop_name'),
         ]);
         todayRows = List<Map<String, dynamic>>.from(results[0]);
@@ -167,7 +192,9 @@ class _PriceBoardState extends State<PriceBoard>
           labelColor: const Color(0xFFE8C96A),
           unselectedLabelColor: Colors.white70,
           indicatorColor: const Color(0xFFE8C96A),
-          tabs: kMarketLabels.map((l) => Tab(text: l)).toList(),
+          tabs: AppConfig.instance.markets
+              .map((m) => Tab(text: m.split(' ').first))
+              .toList(),
         ),
       ),
       body: _isLoading
@@ -178,11 +205,14 @@ class _PriceBoardState extends State<PriceBoard>
               children: [
                 if (_isOffline) _buildOfflineBanner(),
                 if (_isStale) _buildStaleBanner(),
+                if (_weather != null) _buildWeatherStrip(),
                 _buildSearchBar(),
                 Expanded(
                   child: TabBarView(
                     controller: _tabController,
-                    children: kMarkets.map(_buildMarketTab).toList(),
+                    children: AppConfig.instance.markets
+                        .map(_buildMarketTab)
+                        .toList(),
                   ),
                 ),
               ],
@@ -234,6 +264,33 @@ class _PriceBoardState extends State<PriceBoard>
     );
   }
 
+  // ── WEATHER STRIP ────────────────────────────────────────
+  Widget _buildWeatherStrip() {
+    final w = _weather!;
+    final temp = (w['main']?['temp'] as num?)?.toStringAsFixed(0) ?? '--';
+    final humidity = (w['main']?['humidity'] as num?)?.toString() ?? '--';
+    final desc = (w['weather'] as List?)?.first?['main'] as String? ?? '';
+    final emoji = WeatherService.iconEmoji(desc);
+    return Container(
+      width: double.infinity,
+      color: const Color(0xFFE8F5E9),
+      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 16),
+      child: Row(
+        children: [
+          Text(emoji, style: const TextStyle(fontSize: 18)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Baguio City  $temp°C  ·  $humidity% humidity  ·  $desc',
+              style: const TextStyle(fontSize: 12, color: Color(0xFF2D5A3D)),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   // ── SEARCH BAR ───────────────────────────────────────────
   Widget _buildSearchBar() {
     return Padding(
@@ -264,10 +321,36 @@ class _PriceBoardState extends State<PriceBoard>
     }).toList();
 
     if (rows.isEmpty) {
-      return const Center(
-        child: Text(
-          'No prices available for this market today.',
-          style: TextStyle(color: Colors.grey),
+      final hasAnyToday = _todayByMarket[market]?.isNotEmpty ?? false;
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              _search.isNotEmpty
+                  ? Icons.search_off
+                  : Icons.storefront_outlined,
+              size: 52,
+              color: Colors.grey.shade300,
+            ),
+            const SizedBox(height: 12),
+            Text(
+              _search.isNotEmpty
+                  ? 'No crops match "$_search"'
+                  : 'No prices for $market today',
+              style: const TextStyle(
+                  color: Colors.grey, fontWeight: FontWeight.bold),
+            ),
+            if (_search.isEmpty && !hasAnyToday)
+              const Padding(
+                padding: EdgeInsets.only(top: 6),
+                child: Text(
+                  'Prices will appear here once an encoder\nsubmits and admin approves them.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.grey, fontSize: 12),
+                ),
+              ),
+          ],
         ),
       );
     }

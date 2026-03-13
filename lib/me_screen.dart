@@ -6,6 +6,10 @@ import 'auth_service.dart';
 import 'register_screen.dart';
 import 'login_screen.dart';
 import 'biometric_service.dart';
+import 'encoder_screen.dart';
+import 'admin_screen.dart';
+import 'encoder_log_screen.dart';
+import 'edit_profile_screen.dart';
 
 class MeScreen extends StatefulWidget {
   const MeScreen({super.key});
@@ -18,6 +22,7 @@ class _MeScreenState extends State<MeScreen> {
   List<Map<String, dynamic>> _myReports = [];
   bool _loading = true;
   bool _biometricAvailable = false;
+  String _role = 'farmer';
 
   @override
   void initState() {
@@ -27,12 +32,15 @@ class _MeScreenState extends State<MeScreen> {
 
   Future<void> _reload() async {
     final farmer = await AuthService.getLocalFarmer();
+    final role = await AuthService.getLocalRole();
+
     List<Map<String, dynamic>> reports = [];
     if (farmer != null) {
       try {
         final data = await Supabase.instance.client
             .from('supply_reports')
             .select()
+            .eq('farmer_id', farmer['id'])
             .order('reported_at', ascending: false)
             .limit(5);
         reports = List<Map<String, dynamic>>.from(data);
@@ -43,6 +51,7 @@ class _MeScreenState extends State<MeScreen> {
 
     setState(() {
       _farmer = farmer;
+      _role = role;
       _myReports = reports;
       _biometricAvailable = bioAvailable;
       _loading = false;
@@ -180,7 +189,24 @@ class _MeScreenState extends State<MeScreen> {
           _activityCard(),
           const SizedBox(height: 12),
           if (_biometricAvailable) _biometricInfoTile(),
-          if (_biometricAvailable) const SizedBox(height: 4),
+          if (_biometricAvailable) const SizedBox(height: 12),
+
+          // ── ENCODER / ADMIN ACTIONS ──────────────────────
+          if (_role == 'encoder' || _role == 'admin') ...[
+            _sectionHeader('Encoder Actions'),
+            _encoderTile(),
+            const SizedBox(height: 4),
+            _encoderLogTile(),
+            const SizedBox(height: 4),
+          ],
+          if (_role == 'admin') ...[
+            _sectionHeader('Admin'),
+            _adminTile(),
+            const SizedBox(height: 4),
+          ],
+
+          // ── SETTINGS ─────────────────────────────────────
+          _sectionHeader('Settings'),
           _changePinTile(farmerId),
           const SizedBox(height: 4),
           _logOutTile(),
@@ -213,13 +239,40 @@ class _MeScreenState extends State<MeScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    name,
-                    style: const TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF1C3A28),
-                    ),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          name,
+                          style: const TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF1C3A28),
+                          ),
+                        ),
+                      ),
+                      if (_role == 'encoder' || _role == 'admin')
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 7, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: _role == 'admin'
+                                ? const Color(0xFF7C3AED)
+                                : const Color(0xFF0891B2),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            _role.toUpperCase(),
+                            style: const TextStyle(
+                              fontSize: 9,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                              letterSpacing: 0.8,
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
                   if (barangay.isNotEmpty)
                     Text(
@@ -228,6 +281,21 @@ class _MeScreenState extends State<MeScreen> {
                     ),
                 ],
               ),
+            ),
+            // Edit button
+            IconButton(
+              tooltip: 'Edit Profile',
+              icon: const Icon(Icons.edit_outlined,
+                  color: Color(0xFF2D5A3D), size: 20),
+              onPressed: () async {
+                final result = await Navigator.push<String>(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => EditProfileScreen(farmer: _farmer!),
+                  ),
+                );
+                if (result == 'updated') _reload();
+              },
             ),
           ],
         ),
@@ -396,7 +464,6 @@ class _MeScreenState extends State<MeScreen> {
   }
 
   // ── BIOMETRIC INFO TILE ───────────────────────────────────
-  // No toggle needed — biometric is always active when hardware is available
   Widget _biometricInfoTile() {
     return Card(
       child: ListTile(
@@ -407,6 +474,87 @@ class _MeScreenState extends State<MeScreen> {
           style: TextStyle(fontSize: 12, color: Colors.grey),
         ),
         trailing: const Icon(Icons.check_circle, color: Color(0xFF2D5A3D)),
+      ),
+    );
+  }
+
+  // ── ENCODER TILE (encoder + admin) ───────────────────────
+  Widget _encoderTile() {
+    return Card(
+      child: ListTile(
+        leading: const Icon(
+          Icons.price_change_outlined,
+          color: Color(0xFF0891B2),
+        ),
+        title: const Text(
+          'Submit Market Price',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
+        subtitle: const Text(
+          "Enter today's price for a crop",
+          style: TextStyle(fontSize: 12),
+        ),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const EncoderScreen()),
+        ),
+      ),
+    );
+  }
+
+  // ── ADMIN TILE (admin only) ───────────────────────────────
+  Widget _adminTile() {
+    return Card(
+      child: ListTile(
+        leading: const Icon(
+          Icons.people_alt_outlined,
+          color: Color(0xFF7C3AED),
+        ),
+        title: const Text(
+          'All Farmers',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
+        subtitle: const Text(
+          'View all registered farmers',
+          style: TextStyle(fontSize: 12),
+        ),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const AdminScreen()),
+        ),
+      ),
+    );
+  }
+
+  Widget _sectionHeader(String title) => Padding(
+        padding: const EdgeInsets.fromLTRB(4, 12, 0, 6),
+        child: Text(
+          title.toUpperCase(),
+          style: const TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.bold,
+            color: Colors.grey,
+            letterSpacing: 1.2,
+          ),
+        ),
+      );
+
+  Widget _encoderLogTile() {
+    return Card(
+      child: ListTile(
+        leading: const Icon(Icons.history, color: Color(0xFF2D5A3D)),
+        title: const Text('Price Activity Log',
+            style: TextStyle(fontWeight: FontWeight.bold)),
+        subtitle: const Text('View recent price submissions',
+            style: TextStyle(fontSize: 12)),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(
+              builder: (_) => const EncoderLogScreen()),
+        ),
       ),
     );
   }
@@ -453,8 +601,6 @@ class _MeScreenState extends State<MeScreen> {
           );
           if (confirm == true) {
             await AuthService.logOut();
-            // NOTE: biometric preference is NOT cleared on logout —
-            // the device hardware is always available for next login
             _reload();
           }
         },
@@ -473,6 +619,8 @@ class _MeScreenState extends State<MeScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      isDismissible: false,
+      enableDrag: false,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),

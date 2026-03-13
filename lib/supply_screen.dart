@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'auth_service.dart';
 
 const List<String> kSupplyMarkets = [
   'BAPTC La Trinidad',
@@ -32,22 +33,33 @@ class SupplyScreen extends StatefulWidget {
   State<SupplyScreen> createState() => _SupplyScreenState();
 }
 
-class _SupplyScreenState extends State<SupplyScreen> {
+class _SupplyScreenState extends State<SupplyScreen>
+    with SingleTickerProviderStateMixin {
+  late TabController _tabController;
   Map<String, List<Map<String, dynamic>>> _byDate = {};
+  List<Map<String, dynamic>> _allRows = [];
   bool _isLoading = true;
   bool _isOffline = false;
+  DateTime? _lastFetched;
 
   @override
   void initState() {
     super.initState();
+    _tabController = TabController(length: 2, vsync: this);
     _loadSupply();
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadSupply() async {
     setState(() => _isLoading = true);
 
-    final connectivity = await Connectivity().checkConnectivity();
-    final online = connectivity != ConnectivityResult.none;
+    final connectivityList = await Connectivity().checkConnectivity();
+    final online = connectivityList.any((r) => r != ConnectivityResult.none);
 
     if (!online) {
       setState(() {
@@ -74,6 +86,8 @@ class _SupplyScreenState extends State<SupplyScreen> {
       }
       setState(() {
         _byDate = grouped;
+        _allRows = rows;
+        _lastFetched = DateTime.now();
         _isOffline = false;
         _isLoading = false;
       });
@@ -92,7 +106,7 @@ class _SupplyScreenState extends State<SupplyScreen> {
       appBar: AppBar(
         backgroundColor: const Color(0xFF1C3A28),
         title: const Text(
-          '🌾 Supply Alerts',
+          '🌾 Supply',
           style: TextStyle(
             color: Color(0xFFE8B84B),
             fontWeight: FontWeight.bold,
@@ -104,10 +118,21 @@ class _SupplyScreenState extends State<SupplyScreen> {
             onPressed: _loadSupply,
           ),
         ],
+        bottom: TabBar(
+          controller: _tabController,
+          labelColor: const Color(0xFFE8C96A),
+          unselectedLabelColor: Colors.white70,
+          indicatorColor: const Color(0xFFE8C96A),
+          tabs: const [
+            Tab(text: 'Alerts'),
+            Tab(text: 'Forecast'),
+          ],
+        ),
       ),
       floatingActionButton: _isOffline
           ? null
           : FloatingActionButton.extended(
+              heroTag: 'supply_fab',
               backgroundColor: const Color(0xFF1C3A28),
               icon: const Icon(Icons.agriculture, color: Color(0xFFE8C96A)),
               label: const Text(
@@ -124,26 +149,131 @@ class _SupplyScreenState extends State<SupplyScreen> {
               children: [
                 if (_isOffline) _buildOfflineBanner(),
                 Expanded(
-                  child: RefreshIndicator(
-                    color: const Color(0xFF1C3A28),
-                    onRefresh: _loadSupply,
-                    child: _byDate.isEmpty
-                        ? const Center(
-                            child: Text(
-                              'No supply reports yet.',
-                              style: TextStyle(color: Colors.grey),
-                            ),
-                          )
-                        : ListView(
-                            padding: const EdgeInsets.fromLTRB(12, 12, 12, 80),
-                            children: _byDate.entries
-                                .map(_buildDateSection)
-                                .toList(),
-                          ),
+                  child: TabBarView(
+                    controller: _tabController,
+                    children: [
+                      // ── TAB 1: ALERTS ──────────────────────
+                      RefreshIndicator(
+                        color: const Color(0xFF1C3A28),
+                        onRefresh: _loadSupply,
+                        child: _byDate.isEmpty
+                            ? const Center(
+                                child: Text(
+                                  'No supply reports yet.',
+                                  style: TextStyle(color: Colors.grey),
+                                ),
+                              )
+                            : ListView(
+                                padding: const EdgeInsets.fromLTRB(
+                                    12, 12, 12, 80),
+                                children: _byDate.entries
+                                    .map(_buildDateSection)
+                                    .toList(),
+                              ),
+                      ),
+                      // ── TAB 2: FORECAST ────────────────────
+                      _buildForecastTab(),
+                    ],
                   ),
                 ),
               ],
             ),
+    );
+  }
+
+  // ── FORECAST TAB ─────────────────────────────────────────
+  Widget _buildForecastTab() {
+    if (_allRows.isEmpty) {
+      return const Center(
+        child: Text(
+          'No supply data to forecast.',
+          style: TextStyle(color: Colors.grey),
+        ),
+      );
+    }
+
+    // Aggregate total quantity per crop (convert everything to kg estimate)
+    final totals = <String, double>{};
+    for (final r in _allRows) {
+      final crop = r['crop_name'] as String? ?? '';
+      final qty = (r['quantity'] as num?)?.toDouble() ?? 0;
+      final unit = r['unit'] as String? ?? 'kg';
+      // Rough conversion: sack≈50kg, crate≈25kg, load≈500kg
+      final kg = switch (unit) {
+        'sack' => qty * 50,
+        'crate' => qty * 25,
+        'load' => qty * 500,
+        _ => qty,
+      };
+      totals[crop] = (totals[crop] ?? 0) + kg;
+    }
+
+    final sorted = totals.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    final maxVal = sorted.first.value;
+
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        const Text(
+          'Upcoming Supply (next 14 days)',
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
+            fontSize: 16,
+            color: Color(0xFF1C3A28),
+          ),
+        ),
+        Text(
+          _lastFetched != null
+              ? 'Updated ${DateFormat("MMM d, h:mm a").format(_lastFetched!)}  ·  Estimated kg'
+              : 'Estimated kg based on reported quantities',
+          style: const TextStyle(fontSize: 12, color: Colors.grey),
+        ),
+        const SizedBox(height: 16),
+        ...sorted.map((e) {
+          final pct = maxVal > 0 ? e.value / maxVal : 0.0;
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      e.key,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF1C3A28),
+                      ),
+                    ),
+                    Text(
+                      '~${e.value.toStringAsFixed(0)} kg',
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: Color(0xFF2D5A3D),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: LinearProgressIndicator(
+                    value: pct,
+                    minHeight: 10,
+                    backgroundColor: Colors.grey.shade200,
+                    valueColor: const AlwaysStoppedAnimation(
+                      Color(0xFF2D5A3D),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        }),
+      ],
     );
   }
 
@@ -505,9 +635,12 @@ class _SupplyScreenState extends State<SupplyScreen> {
                               final qty =
                                   double.tryParse(qtyController.text.trim()) ??
                                   0;
+                              final farmerId =
+                                  await AuthService.getLocalFarmerId();
                               await Supabase.instance.client
                                   .from('supply_reports')
                                   .insert({
+                                    'farmer_id': ?farmerId,
                                     'crop_name': selectedCrop,
                                     'market_name': selectedMarket,
                                     'planned_for': DateFormat(

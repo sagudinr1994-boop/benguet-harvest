@@ -104,7 +104,7 @@ class _MapScreenState extends State<MapScreen> {
       final supplyData = await Supabase.instance.client
           .from('supply_reports')
           .select('''
-            id, crop_name, quantity_kg, market_name,
+            id, crop_name, quantity, unit, market_name,
             planned_for,
             farmers(id, name, barangay, latitude, longitude)
           ''')
@@ -433,7 +433,8 @@ class _MapScreenState extends State<MapScreen> {
 
   void _showSupplySheet(Map<String, dynamic> report) {
     final crop = report['crop_name'] as String? ?? '?';
-    final qty = report['quantity_kg'];
+    final qty = report['quantity'];
+    final unit = report['unit'] as String? ?? 'kg';
     final market = report['market_name'] as String? ?? '?';
     final date = report['planned_for'] as String? ?? '';
     final farmer = report['farmers'] as Map<String, dynamic>? ?? {};
@@ -486,7 +487,7 @@ class _MapScreenState extends State<MapScreen> {
                         ),
                       ),
                       Text(
-                        '${qty ?? '-'} kg  →  $market',
+                        '${qty ?? '-'} $unit  →  $market',
                         style: const TextStyle(color: Colors.grey),
                       ),
                     ],
@@ -498,7 +499,7 @@ class _MapScreenState extends State<MapScreen> {
             _infoRow(Icons.person_outline, 'Farmer', fName),
             _infoRow(Icons.storefront, 'Market', market),
             _infoRow(Icons.calendar_today, 'Delivery', date),
-            _infoRow(Icons.scale, 'Quantity', '${qty ?? '-'} kg'),
+            _infoRow(Icons.scale, 'Quantity', '${qty ?? '-'} $unit'),
           ],
         ),
       ),
