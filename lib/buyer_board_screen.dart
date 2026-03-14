@@ -42,7 +42,8 @@ class BuyerBoardScreen extends StatefulWidget {
   State<BuyerBoardScreen> createState() => _BuyerBoardState();
 }
 
-class _BuyerBoardState extends State<BuyerBoardScreen> {
+class _BuyerBoardState extends State<BuyerBoardScreen>
+    with SingleTickerProviderStateMixin {
   List<Map<String, dynamic>> _requests = [];
   bool _loading = true;
   String _cropFilter = 'All';
@@ -50,6 +51,7 @@ class _BuyerBoardState extends State<BuyerBoardScreen> {
   Set<String> _myRespondedIds = {};
   String _deviceId = ''; // permanent per-device UUID for ownership
   bool _isAdmin = false;
+  late TabController _tabCtrl;
 
   static const _postsKey = 'my_buyer_post_ids';
   static const _respondedKey = 'my_buyer_responded_ids';
@@ -58,7 +60,14 @@ class _BuyerBoardState extends State<BuyerBoardScreen> {
   @override
   void initState() {
     super.initState();
+    _tabCtrl = TabController(length: 2, vsync: this);
     _loadPrefs().then((_) => _load());
+  }
+
+  @override
+  void dispose() {
+    _tabCtrl.dispose();
+    super.dispose();
   }
 
   /// Returns a random hex UUID stored permanently on this device.
@@ -142,9 +151,22 @@ class _BuyerBoardState extends State<BuyerBoardScreen> {
     }
   }
 
+  bool _isMyPost(Map<String, dynamic> r) {
+    final id = r['id'] as String? ?? '';
+    final postDeviceId = r['poster_device_id'] as String? ?? '';
+    return (_deviceId.isNotEmpty && postDeviceId == _deviceId) ||
+        (_myPostIds.contains(id) && postDeviceId.isEmpty);
+  }
+
   List<Map<String, dynamic>> get _filtered {
     if (_cropFilter == 'All') return _requests;
     return _requests.where((r) => r['crop_name'] == _cropFilter).toList();
+  }
+
+  // My Posts tab: poster sees own posts; admin sees all posts.
+  List<Map<String, dynamic>> get _myPosts {
+    if (_isAdmin) return _requests;
+    return _requests.where(_isMyPost).toList();
   }
 
   List<String> get _availableCrops {
@@ -164,6 +186,7 @@ class _BuyerBoardState extends State<BuyerBoardScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final myCount = _isAdmin ? _requests.length : _requests.where(_isMyPost).length;
     return Scaffold(
       backgroundColor: const Color(0xFFF2EDE6),
       appBar: AppBar(
@@ -171,10 +194,7 @@ class _BuyerBoardState extends State<BuyerBoardScreen> {
         iconTheme: const IconThemeData(color: Color(0xFFE8B84B)),
         title: const Text(
           'Buyer Board',
-          style: TextStyle(
-            color: Color(0xFFE8B84B),
-            fontWeight: FontWeight.bold,
-          ),
+          style: TextStyle(color: Color(0xFFE8B84B), fontWeight: FontWeight.bold),
         ),
         actions: [
           IconButton(
@@ -182,40 +202,349 @@ class _BuyerBoardState extends State<BuyerBoardScreen> {
             onPressed: _load,
           ),
         ],
+        bottom: TabBar(
+          controller: _tabCtrl,
+          indicatorColor: const Color(0xFFE8B84B),
+          labelColor: const Color(0xFFE8B84B),
+          unselectedLabelColor: Colors.white60,
+          tabs: [
+            const Tab(text: 'All Requests'),
+            Tab(
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(_isAdmin ? 'Manage All' : 'My Posts'),
+                  if (myCount > 0) ...[
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFE8B84B),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text(
+                        '$myCount',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF1C3A28),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
       floatingActionButton: FloatingActionButton.extended(
         heroTag: 'buyer_fab',
         backgroundColor: const Color(0xFF1C3A28),
         icon: const Icon(Icons.add_business, color: Color(0xFFE8C96A)),
-        label: const Text(
-          'Post Request',
-          style: TextStyle(color: Color(0xFFE8C96A)),
-        ),
+        label: const Text('Post Request', style: TextStyle(color: Color(0xFFE8C96A))),
         onPressed: _showPostSheet,
       ),
       body: _loading
-          ? const Center(
-              child: CircularProgressIndicator(color: Color(0xFF1C3A28)),
-            )
-          : Column(
+          ? const Center(child: CircularProgressIndicator(color: Color(0xFF1C3A28)))
+          : TabBarView(
+              controller: _tabCtrl,
               children: [
-                _buildHeader(),
-                if (_availableCrops.length > 1) _buildCropFilter(),
+                // ── Tab 0: All Requests ──────────────────────────
+                Column(
+                  children: [
+                    _buildHeader(),
+                    if (_availableCrops.length > 1) _buildCropFilter(),
+                    Expanded(
+                      child: RefreshIndicator(
+                        color: const Color(0xFF1C3A28),
+                        onRefresh: _load,
+                        child: _filtered.isEmpty
+                            ? _buildEmptyState()
+                            : ListView.builder(
+                                padding: const EdgeInsets.fromLTRB(12, 8, 12, 80),
+                                itemCount: _filtered.length,
+                                itemBuilder: (_, i) => _buildCard(_filtered[i]),
+                              ),
+                      ),
+                    ),
+                  ],
+                ),
+                // ── Tab 1: My Posts / Manage All ─────────────────
+                _buildMyPostsTab(),
+              ],
+            ),
+    );
+  }
+
+  Widget _buildMyPostsTab() {
+    final posts = _isAdmin ? _requests : _requests.where(_isMyPost).toList();
+    return RefreshIndicator(
+      color: const Color(0xFF1C3A28),
+      onRefresh: _load,
+      child: posts.isEmpty
+          ? Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.inbox_outlined, size: 64, color: Colors.grey.shade400),
+                  const SizedBox(height: 12),
+                  Text(
+                    _isAdmin ? 'No open requests on the board.' : 'You have no posts yet.',
+                    style: const TextStyle(
+                      color: Colors.grey,
+                      fontSize: 15,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'Tap "Post Request" to add one.',
+                    style: TextStyle(color: Colors.grey, fontSize: 12),
+                  ),
+                ],
+              ),
+            )
+          : ListView.builder(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 80),
+              itemCount: posts.length,
+              itemBuilder: (_, i) => _buildManageCard(posts[i]),
+            ),
+    );
+  }
+
+  // ── MANAGE CARD (My Posts / Admin) ────────────────────────
+  Widget _buildManageCard(Map<String, dynamic> r) {
+    final id = r['id'] as String? ?? '';
+    final buyerName = r['buyer_name'] as String? ?? '';
+    final buyerType = r['buyer_type'] as String? ?? 'Restaurant';
+    final crop = r['crop_name'] as String? ?? '';
+    final kg = (r['quantity_kg'] as num?)?.toDouble() ?? 0;
+    final neededBy = DateTime.tryParse(r['needed_by']?.toString() ?? '');
+    final location = r['location'] as String? ?? '';
+    final responseCount = _responseCount(r);
+    final typeColor = _typeColor(buyerType);
+    final daysLeft = neededBy
+        ?.difference(DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day))
+        .inDays;
+    final isUrgent = daysLeft != null && daysLeft <= 2;
+    final isOwner = _isMyPost(r);
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 10),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      elevation: 2,
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // ── TOP ROW ─────────────────────────────────────
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: typeColor.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(_typeIcon(buyerType), color: typeColor, size: 18),
+                ),
+                const SizedBox(width: 10),
                 Expanded(
-                  child: RefreshIndicator(
-                    color: const Color(0xFF1C3A28),
-                    onRefresh: _load,
-                    child: _filtered.isEmpty
-                        ? _buildEmptyState()
-                        : ListView.builder(
-                            padding: const EdgeInsets.fromLTRB(12, 8, 12, 80),
-                            itemCount: _filtered.length,
-                            itemBuilder: (_, i) => _buildCard(_filtered[i]),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        buyerName,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 15,
+                          color: Color(0xFF1C3A28),
+                        ),
+                      ),
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: typeColor.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              buyerType,
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                                color: typeColor,
+                              ),
+                            ),
                           ),
+                          if (location.isNotEmpty) ...[
+                            const SizedBox(width: 6),
+                            Flexible(
+                              child: Text(
+                                '· $location',
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontSize: 11, color: Colors.grey),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                // Ownership badge
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: isOwner ? const Color(0xFFF0FDF4) : const Color(0xFFFEF3C7),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: isOwner ? const Color(0xFF16A34A) : const Color(0xFFD97706),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        isOwner ? Icons.verified_outlined : Icons.admin_panel_settings_outlined,
+                        size: 13,
+                        color: isOwner ? const Color(0xFF16A34A) : const Color(0xFFD97706),
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        isOwner ? 'My Post' : 'Admin',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color: isOwner ? const Color(0xFF16A34A) : const Color(0xFFD97706),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
             ),
+
+            const SizedBox(height: 10),
+
+            // ── CROP / QTY / DATE ───────────────────────────
+            Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              children: [
+                _badge(crop, const Color(0xFF1C3A28), Colors.white),
+                _badge('${kg.toStringAsFixed(0)} kg', Colors.grey.shade100,
+                    const Color(0xFF1C3A28), border: Colors.grey.shade300),
+                if (neededBy != null)
+                  _badge(
+                    daysLeft == 0
+                        ? 'Needed TODAY'
+                        : daysLeft == 1
+                            ? 'Needed TOMORROW'
+                            : 'Needed ${DateFormat('MMM d').format(neededBy)}',
+                    isUrgent ? const Color(0xFFFEE2E2) : const Color(0xFFDCFCE7),
+                    isUrgent ? const Color(0xFFDC2626) : const Color(0xFF16A34A),
+                    border: isUrgent ? const Color(0xFFDC2626) : const Color(0xFF16A34A),
+                  ),
+                if (responseCount > 0)
+                  _badge(
+                    '$responseCount farmer${responseCount == 1 ? '' : 's'} interested',
+                    const Color(0xFFFFF7ED),
+                    const Color(0xFFEA580C),
+                    border: const Color(0xFFEA580C),
+                    icon: Icons.people_outline,
+                  ),
+              ],
+            ),
+
+            const SizedBox(height: 12),
+            const Divider(height: 1),
+            const SizedBox(height: 10),
+
+            // ── ACTION BUTTONS ───────────────────────────────
+            Row(
+              children: [
+                // View Responses
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () => _showResponsesSheet(id, buyerName, responseCount),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      decoration: BoxDecoration(
+                        color: responseCount > 0
+                            ? const Color(0xFFFFF7ED)
+                            : Colors.grey.shade100,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: responseCount > 0
+                              ? const Color(0xFFEA580C)
+                              : Colors.grey.shade300,
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            responseCount > 0 ? Icons.people : Icons.people_outline,
+                            color: responseCount > 0 ? const Color(0xFFEA580C) : Colors.grey,
+                            size: 16,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            responseCount > 0
+                                ? '$responseCount Interested'
+                                : 'No responses',
+                            style: TextStyle(
+                              color: responseCount > 0
+                                  ? const Color(0xFFEA580C)
+                                  : Colors.grey,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                // Delete button
+                GestureDetector(
+                  onTap: () => isOwner
+                      ? _markFilled(id, buyerName)
+                      : _adminDelete(id, buyerName),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFEE2E2),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: const Color(0xFFDC2626)),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.delete_outline, color: Color(0xFFDC2626), size: 18),
+                        const SizedBox(width: 5),
+                        Text(
+                          isOwner ? 'Remove' : 'Admin Remove',
+                          style: const TextStyle(
+                            color: Color(0xFFDC2626),
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -388,12 +717,7 @@ class _BuyerBoardState extends State<BuyerBoardScreen> {
     final isUrgent = daysLeft != null && daysLeft <= 2;
     final typeColor = _typeColor(buyerType);
 
-    // Owner check: strict UUID match for new posts (poster_device_id set).
-    // For old posts where poster_device_id is empty, fall back to local SharedPreferences
-    // tracking (_myPostIds) — safe because only this device has those IDs saved.
-    final postDeviceId = r['poster_device_id'] as String? ?? '';
-    final isMyPost = (_deviceId.isNotEmpty && postDeviceId == _deviceId) ||
-        (_myPostIds.contains(id) && postDeviceId.isEmpty);
+    final isMyPost = _isMyPost(r);
     final iResponded = !isMyPost && _myRespondedIds.contains(id);
 
     return Card(
