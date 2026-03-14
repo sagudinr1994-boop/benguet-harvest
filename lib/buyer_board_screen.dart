@@ -186,7 +186,12 @@ class _BuyerBoardState extends State<BuyerBoardScreen>
 
   @override
   Widget build(BuildContext context) {
-    final myCount = _isAdmin ? _requests.length : _requests.where(_isMyPost).length;
+    final myCount = _isAdmin
+        ? _requests.length
+        : _requests.where((r) {
+            final postDeviceId = r['poster_device_id'] as String? ?? '';
+            return _deviceId.isNotEmpty && postDeviceId == _deviceId;
+          }).length;
     return Scaffold(
       backgroundColor: const Color(0xFFF2EDE6),
       appBar: AppBar(
@@ -278,7 +283,12 @@ class _BuyerBoardState extends State<BuyerBoardScreen>
   }
 
   Widget _buildMyPostsTab() {
-    final posts = _isAdmin ? _requests : _requests.where(_isMyPost).toList();
+    final posts = _isAdmin
+        ? _requests
+        : _requests.where((r) {
+            final postDeviceId = r['poster_device_id'] as String? ?? '';
+            return _deviceId.isNotEmpty && postDeviceId == _deviceId;
+          }).toList();
     return RefreshIndicator(
       color: const Color(0xFF1C3A28),
       onRefresh: _load,
