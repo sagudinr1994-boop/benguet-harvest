@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'crop_calculator_screen.dart';
 import 'harvest_calendar_screen.dart';
 import 'trader_directory_screen.dart';
 import 'cargo_screen.dart';
@@ -35,14 +34,6 @@ class ToolsScreen extends StatelessWidget {
             mainAxisSpacing: 12,
             childAspectRatio: 1.1,
             children: [
-              _toolCard(
-                context,
-                icon: Icons.calculate_outlined,
-                color: const Color(0xFF0891B2),
-                title: 'Crop\nCalculator',
-                subtitle: 'Estimate harvest revenue',
-                screen: const CropCalculatorScreen(),
-              ),
               _toolCard(
                 context,
                 icon: Icons.calendar_month_outlined,

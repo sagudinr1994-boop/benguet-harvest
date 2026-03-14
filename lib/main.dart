@@ -9,8 +9,10 @@ import 'road_screen.dart';
 import 'supply_screen.dart';
 import 'me_screen.dart';
 import 'tools_screen.dart';
+import 'inbox_screen.dart';
 import 'admin_desktop_screen.dart';
 import 'app_config.dart';
+import 'auth_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -67,32 +69,97 @@ class AppShell extends StatefulWidget {
 
 class _AppShellState extends State<AppShell> {
   int _currentIndex = 0;
+  int _unreadMessages = 0;
+  RealtimeChannel? _msgChannel;
+  String? _myId;
 
-  // 5 screens — Tools replaces Map (Map is accessible inside Tools)
   static const List<Widget> _screens = [
     PriceBoard(),
     RoadScreen(),
     SupplyScreen(),
     MeScreen(),
     ToolsScreen(),
+    InboxScreen(),
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    _initUnread();
+  }
+
+  @override
+  void dispose() {
+    _msgChannel?.unsubscribe();
+    super.dispose();
+  }
+
+  Future<void> _initUnread() async {
+    final id = await AuthService.getLocalFarmerId();
+    if (id == null || !mounted) return;
+    _myId = id;
+    await _refreshUnread();
+    _msgChannel = Supabase.instance.client
+        .channel('shell_unread')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'messages',
+          callback: (_) => _refreshUnread(),
+        )
+        .subscribe();
+  }
+
+  Future<void> _refreshUnread() async {
+    if (_myId == null || !mounted) return;
+    try {
+      final convs = await Supabase.instance.client
+          .from('conversations')
+          .select('id')
+          .or('farmer_a_id.eq.$_myId,farmer_b_id.eq.$_myId');
+      if ((convs as List).isEmpty) {
+        if (mounted) setState(() => _unreadMessages = 0);
+        return;
+      }
+      final ids = convs.map((c) => c['id'] as String).toList();
+      final rows = await Supabase.instance.client
+          .from('messages')
+          .select('id')
+          .inFilter('conversation_id', ids)
+          .neq('sender_id', _myId!)
+          .isFilter('read_at', null);
+      if (mounted) setState(() => _unreadMessages = (rows as List).length);
+    } catch (_) {}
+  }
 
   @override
   Widget build(BuildContext context) => Scaffold(
     body: IndexedStack(index: _currentIndex, children: _screens),
     bottomNavigationBar: BottomNavigationBar(
       currentIndex: _currentIndex,
-      onTap: (i) => setState(() => _currentIndex = i),
+      onTap: (i) {
+        setState(() => _currentIndex = i);
+        if (i == 5) _refreshUnread();
+      },
       selectedItemColor: const Color(0xFF1C3A28),
       unselectedItemColor: Colors.grey,
       selectedLabelStyle: const TextStyle(fontWeight: FontWeight.bold),
       type: BottomNavigationBarType.fixed,
-      items: const [
-        BottomNavigationBarItem(icon: Icon(Icons.storefront), label: 'Prices'),
-        BottomNavigationBarItem(icon: Icon(Icons.add_road), label: 'Roads'),
-        BottomNavigationBarItem(icon: Icon(Icons.agriculture), label: 'Supply'),
-        BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Me'),
-        BottomNavigationBarItem(icon: Icon(Icons.handyman_outlined), label: 'Tools'),
+      items: [
+        const BottomNavigationBarItem(icon: Icon(Icons.storefront), label: 'Prices'),
+        const BottomNavigationBarItem(icon: Icon(Icons.add_road), label: 'Roads'),
+        const BottomNavigationBarItem(icon: Icon(Icons.agriculture), label: 'Supply'),
+        const BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Me'),
+        const BottomNavigationBarItem(icon: Icon(Icons.handyman_outlined), label: 'Tools'),
+        BottomNavigationBarItem(
+          label: 'Messages',
+          icon: _unreadMessages > 0
+              ? Badge(
+                  label: Text('$_unreadMessages'),
+                  child: const Icon(Icons.chat_bubble_outline),
+                )
+              : const Icon(Icons.chat_bubble_outline),
+        ),
       ],
     ),
   );

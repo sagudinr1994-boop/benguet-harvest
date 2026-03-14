@@ -47,13 +47,11 @@ class _BuyerBoardState extends State<BuyerBoardScreen>
   List<Map<String, dynamic>> _requests = [];
   bool _loading = true;
   String _cropFilter = 'All';
-  Set<String> _myPostIds = {}; // backward-compat for old posts
   Set<String> _myRespondedIds = {};
   String _deviceId = ''; // permanent per-device UUID for ownership
   bool _isAdmin = false;
   late TabController _tabCtrl;
 
-  static const _postsKey = 'my_buyer_post_ids';
   static const _respondedKey = 'my_buyer_responded_ids';
   static const _deviceKey = 'buyer_device_id';
 
@@ -86,18 +84,11 @@ class _BuyerBoardState extends State<BuyerBoardScreen>
     }
     setState(() {
       _deviceId = deviceId;
-      _myPostIds = (prefs.getStringList(_postsKey) ?? []).toSet();
       _myRespondedIds = (prefs.getStringList(_respondedKey) ?? []).toSet();
       _isAdmin = (prefs.getString('farmer_role') ?? '') == 'admin';
     });
   }
 
-  Future<void> _saveMyPost(String id) async {
-    final prefs = await SharedPreferences.getInstance();
-    _myPostIds.add(id);
-    await prefs.setStringList(_postsKey, _myPostIds.toList());
-    if (mounted) setState(() {});
-  }
 
   Future<void> _saveMyResponse(String requestId) async {
     final prefs = await SharedPreferences.getInstance();
@@ -152,10 +143,8 @@ class _BuyerBoardState extends State<BuyerBoardScreen>
   }
 
   bool _isMyPost(Map<String, dynamic> r) {
-    final id = r['id'] as String? ?? '';
     final postDeviceId = r['poster_device_id'] as String? ?? '';
-    return (_deviceId.isNotEmpty && postDeviceId == _deviceId) ||
-        (_myPostIds.contains(id) && postDeviceId.isEmpty);
+    return _deviceId.isNotEmpty && postDeviceId == _deviceId;
   }
 
   List<Map<String, dynamic>> get _filtered {
@@ -163,11 +152,6 @@ class _BuyerBoardState extends State<BuyerBoardScreen>
     return _requests.where((r) => r['crop_name'] == _cropFilter).toList();
   }
 
-  // My Posts tab: poster sees own posts; admin sees all posts.
-  List<Map<String, dynamic>> get _myPosts {
-    if (_isAdmin) return _requests;
-    return _requests.where(_isMyPost).toList();
-  }
 
   List<String> get _availableCrops {
     final crops =
@@ -1776,24 +1760,12 @@ class _BuyerBoardState extends State<BuyerBoardScreen>
                               };
                               // Try with device ID (requires SQL migration).
                               // Falls back without it if column doesn't exist yet.
-                              Map<String, dynamic> res;
-                              try {
-                                res = await Supabase.instance.client
-                                    .from('buyer_requests')
-                                    .insert({
-                                      ...payload,
-                                      'poster_device_id': _deviceId,
-                                    })
-                                    .select('id')
-                                    .single();
-                              } catch (_) {
-                                res = await Supabase.instance.client
-                                    .from('buyer_requests')
-                                    .insert(payload)
-                                    .select('id')
-                                    .single();
-                              }
-                              await _saveMyPost(res['id'] as String);
+                              await Supabase.instance.client
+                                  .from('buyer_requests')
+                                  .insert({
+                                    ...payload,
+                                    'poster_device_id': _deviceId,
+                                  });
                               if (ctx.mounted) Navigator.pop(ctx);
                               _load();
                             } catch (e) {

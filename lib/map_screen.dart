@@ -1,8 +1,13 @@
+import 'dart:async';
+import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:flutter_compass/flutter_compass.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'auth_service.dart';
+import 'messaging_service.dart';
 
 const LatLng kBenguetCenter = LatLng(16.4023, 120.5960);
 const double kInitialZoom = 10.0;
@@ -80,6 +85,9 @@ class _MapScreenState extends State<MapScreen> {
   bool _showFarms = true;
   bool _showSupply = true;
   bool _showLegend = true;
+  bool _compassMode = false;
+  double _compassHeading = 0;
+  StreamSubscription<CompassEvent>? _compassSub;
 
   @override
   void initState() {
@@ -87,19 +95,41 @@ class _MapScreenState extends State<MapScreen> {
     _loadAll();
   }
 
+  @override
+  void dispose() {
+    _compassSub?.cancel();
+    super.dispose();
+  }
+
+  void _toggleCompass() {
+    if (_compassMode) {
+      _compassSub?.cancel();
+      _compassSub = null;
+      _mapController.rotate(0);
+      setState(() { _compassMode = false; _compassHeading = 0; });
+    } else {
+      _compassSub = FlutterCompass.events?.listen((event) {
+        if (event.heading != null && mounted) {
+          _mapController.rotate(-event.heading!);
+          setState(() => _compassHeading = event.heading!);
+        }
+      });
+      setState(() => _compassMode = true);
+    }
+  }
+
   Future<void> _loadAll() async {
     setState(() => _loading = true);
     try {
       final farmersData = await Supabase.instance.client
           .from('farmers')
-          .select('id, name, barangay, crops_grown, latitude, longitude')
+          .select('id, name, barangay, phone, crops_grown, latitude, longitude')
           .not('latitude', 'is', null)
           .not('longitude', 'is', null);
 
       final today = DateTime.now();
-      final tomorrow = today.add(const Duration(days: 1));
       final dateFrom = today.toIso8601String().substring(0, 10);
-      final dateTo = tomorrow.toIso8601String().substring(0, 10);
+      final dateTo = today.add(const Duration(days: 7)).toIso8601String().substring(0, 10);
 
       final supplyData = await Supabase.instance.client
           .from('supply_reports')
@@ -120,8 +150,7 @@ class _MapScreenState extends State<MapScreen> {
         _loading = false;
       });
     } catch (e) {
-      print('Map load error: $e');
-      setState(() => _loading = false);
+      if (mounted) setState(() => _loading = false);
     }
   }
 
@@ -144,6 +173,17 @@ class _MapScreenState extends State<MapScreen> {
           ),
         ),
         actions: [
+          IconButton(
+            tooltip: _compassMode ? 'Compass ON — tap to disable' : 'Enable compass mode',
+            icon: Transform.rotate(
+              angle: _compassHeading * (pi / 180),
+              child: Icon(
+                Icons.explore,
+                color: _compassMode ? const Color(0xFFE8B84B) : Colors.white60,
+              ),
+            ),
+            onPressed: _toggleCompass,
+          ),
           IconButton(
             tooltip: 'Toggle farms',
             icon: Icon(
@@ -209,7 +249,7 @@ class _MapScreenState extends State<MapScreen> {
       children: [
         TileLayer(
           urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-          userAgentPackageName: 'com.example.benguet_harvest',
+          userAgentPackageName: 'com.benguet.harvest',
           maxZoom: 19,
         ),
         CircleLayer(
@@ -315,6 +355,7 @@ class _MapScreenState extends State<MapScreen> {
   void _showFarmerSheet(Map<String, dynamic> farmer) {
     final name = farmer['name'] as String? ?? 'Unknown';
     final barangay = farmer['barangay'] as String? ?? '';
+    final phone = farmer['phone'] as String? ?? '';
     final crops = (farmer['crops_grown'] as List?)?.cast<String>() ?? [];
     final isMe = farmer['id'] == _myFarmer?['id'];
 
@@ -423,6 +464,52 @@ class _MapScreenState extends State<MapScreen> {
                 'No crops listed.',
                 style: TextStyle(color: Colors.grey),
               ),
+            if (!isMe) ...[
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  if (phone.isNotEmpty)
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF1C3A28),
+                          foregroundColor: const Color(0xFFE8C96A),
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                        ),
+                        icon: const Icon(Icons.phone_outlined, size: 18),
+                        label: const Text('Call'),
+                        onPressed: () => launchUrl(Uri.parse('tel:$phone')),
+                      ),
+                    ),
+                  if (phone.isNotEmpty) const SizedBox(width: 10),
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFE8B84B),
+                        foregroundColor: const Color(0xFF1C3A28),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                      icon: const Icon(Icons.chat_bubble_outline, size: 18),
+                      label: const Text('Message'),
+                      onPressed: () {
+                        Navigator.pop(context);
+                        MessagingService.openChat(
+                          context,
+                          otherFarmerId: farmer['id'] as String,
+                          otherName: name,
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ],
         ),
       ),

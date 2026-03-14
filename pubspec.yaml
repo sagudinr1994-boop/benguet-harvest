@@ -23,6 +23,7 @@ dependencies:
   flutter_map: ^7.0.2
   latlong2: ^0.9.1
   geolocator: ^12.0.0
+  flutter_compass: ^0.8.1
 
   # Push notifications
   onesignal_flutter: ^5.2.6
