@@ -42,17 +42,16 @@ class RegisterScreen extends StatefulWidget {
 }
 
 class _RegisterScreenState extends State<RegisterScreen> {
-  // Multi-step form: 0=Name, 1=Barangay+Phone, 2=Crops, 3=GPS, 4=PIN
+  // Multi-step form: 0=Name, 1=Barangay+Email, 2=Crops, 3=GPS, 4=PIN, 5=Confirm Email
   int _step = 0;
   bool _submitting = false;
 
-  // Form field values collected across steps
-  final _nameCtrl = TextEditingController();
-  final _phoneCtrl = TextEditingController();
-  final _pin1Ctrl = TextEditingController();
-  final _pin2Ctrl = TextEditingController();
+  final _nameCtrl  = TextEditingController();
+  final _emailCtrl = TextEditingController();
+  final _pin1Ctrl  = TextEditingController();
+  final _pin2Ctrl  = TextEditingController();
   String _barangay = kBarangays[0];
-  final _selectedCrops = <String>{}; // Set — no duplicates
+  final _selectedCrops = <String>{};
   double? _latitude;
   double? _longitude;
   bool _gpsLoading = false;
@@ -61,7 +60,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   @override
   void dispose() {
     _nameCtrl.dispose();
-    _phoneCtrl.dispose();
+    _emailCtrl.dispose();
     _pin1Ctrl.dispose();
     _pin2Ctrl.dispose();
     super.dispose();
@@ -75,7 +74,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         backgroundColor: const Color(0xFF1C3A28),
         iconTheme: const IconThemeData(color: Color(0xFFE8B84B)),
         title: Text(
-          'Register — Step ${_step + 1} of 5',
+          _step == 5 ? 'Confirm Email' : 'Register — Step ${_step + 1} of 5',
           style: const TextStyle(
             color: Color(0xFFE8B84B),
             fontWeight: FontWeight.bold,
@@ -88,14 +87,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _buildProgressBar(),
-              const SizedBox(height: 24),
+              if (_step < 5) _buildProgressBar(),
+              if (_step < 5) const SizedBox(height: 24),
               if (_step == 0) _buildStep0Name(),
               if (_step == 1) _buildStep1Contact(),
               if (_step == 2) _buildStep2Crops(),
               if (_step == 3) _buildStep3GPS(),
               if (_step == 4) _buildStep4PIN(),
-              if (_errorMessage != null) ...[
+              if (_step == 5) _buildStep5Confirm(),
+              if (_errorMessage != null && _step < 5) ...[
                 const SizedBox(height: 12),
                 Text(
                   _errorMessage!,
@@ -112,7 +112,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
-  // Green progress bar — fills as steps complete
   Widget _buildProgressBar() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -164,17 +163,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
           if (_nameCtrl.text.trim().length < 2) {
             setState(() => _errorMessage = 'Please enter your full name.');
           } else {
-            setState(() {
-              _step = 1;
-              _errorMessage = null;
-            });
+            setState(() { _step = 1; _errorMessage = null; });
           }
         }),
       ],
     );
   }
 
-  // ── STEP 1: Barangay + Phone ──────────────────────────────
+  // ── STEP 1: Barangay + Email ──────────────────────────────
   Widget _buildStep1Contact() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -186,6 +182,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
             fontWeight: FontWeight.bold,
             color: Color(0xFF1C3A28),
           ),
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'Your email will be used to verify your account and for private messaging — your phone number stays private.',
+          style: TextStyle(color: Colors.grey, fontSize: 12),
         ),
         const SizedBox(height: 20),
         DropdownButtonFormField<String>(
@@ -203,12 +204,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
         ),
         const SizedBox(height: 16),
         TextField(
-          controller: _phoneCtrl,
-          keyboardType: TextInputType.phone,
+          controller: _emailCtrl,
+          keyboardType: TextInputType.emailAddress,
+          autocorrect: false,
           decoration: const InputDecoration(
-            labelText: 'Mobile Number',
-            hintText: '09XXXXXXXXX',
-            prefixIcon: Icon(Icons.phone_outlined),
+            labelText: 'Email Address',
+            hintText: 'you@example.com',
+            prefixIcon: Icon(Icons.email_outlined),
             border: OutlineInputBorder(),
             filled: true,
             fillColor: Colors.white,
@@ -216,25 +218,20 @@ class _RegisterScreenState extends State<RegisterScreen> {
         ),
         const SizedBox(height: 24),
         _nextButton('Next: Crops I Grow', () async {
-          final phone = _phoneCtrl.text.trim();
-          if (phone.length < 11) {
-            setState(
-              () => _errorMessage = 'Enter a valid 11-digit mobile number.',
-            );
+          final email = _emailCtrl.text.trim();
+          if (!email.contains('@') || !email.contains('.')) {
+            setState(() => _errorMessage = 'Enter a valid email address.');
             return;
           }
-          final exists = await AuthService.phoneExists(phone);
+          setState(() { _submitting = true; _errorMessage = null; });
+          final exists = await AuthService.emailExists(email);
+          setState(() => _submitting = false);
           if (exists) {
-            setState(
-              () => _errorMessage =
-                  'This number is already registered. Please log in instead.',
-            );
+            setState(() => _errorMessage =
+                'This email is already registered. Please log in instead.');
             return;
           }
-          setState(() {
-            _step = 2;
-            _errorMessage = null;
-          });
+          setState(() { _step = 2; _errorMessage = null; });
         }),
       ],
     );
@@ -267,13 +264,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
               label: Text(crop),
               selected: selected,
               onSelected: (v) => setState(() {
-                if (v) {
-                  _selectedCrops.add(crop);
-                } else {
-                  _selectedCrops.remove(crop);
-                }
+                if (v) { _selectedCrops.add(crop); } else { _selectedCrops.remove(crop); }
               }),
-              selectedColor: const Color(0xFF2D5A3D).withOpacity(0.2),
+              selectedColor: const Color(0xFF2D5A3D).withValues(alpha: 0.2),
               checkmarkColor: const Color(0xFF1C3A28),
               labelStyle: TextStyle(
                 color: selected ? const Color(0xFF1C3A28) : Colors.black87,
@@ -287,10 +280,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           if (_selectedCrops.isEmpty) {
             setState(() => _errorMessage = 'Please select at least one crop.');
           } else {
-            setState(() {
-              _step = 3;
-              _errorMessage = null;
-            });
+            setState(() { _step = 3; _errorMessage = null; });
           }
         }),
       ],
@@ -361,16 +351,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
         ),
         const SizedBox(height: 24),
         _nextButton('Next: Create PIN', () {
-          setState(() {
-            _step = 4;
-            _errorMessage = null;
-          });
+          setState(() { _step = 4; _errorMessage = null; });
         }),
         TextButton(
-          onPressed: () => setState(() {
-            _step = 4;
-            _errorMessage = null;
-          }),
+          onPressed: () => setState(() { _step = 4; _errorMessage = null; }),
           child: const Text(
             'Skip — I\'ll add location later',
             style: TextStyle(color: Colors.grey),
@@ -380,12 +364,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
-  // Capture GPS coordinates from the device
   Future<void> _captureGPS() async {
-    setState(() {
-      _gpsLoading = true;
-      _errorMessage = null;
-    });
+    setState(() { _gpsLoading = true; _errorMessage = null; });
     try {
       LocationPermission perm = await Geolocator.checkPermission();
       if (perm == LocationPermission.denied) {
@@ -393,8 +373,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       }
       if (perm == LocationPermission.deniedForever) {
         setState(() {
-          _errorMessage =
-              'Location permission denied. Enable in phone settings.';
+          _errorMessage = 'Location permission denied. Enable in phone settings.';
           _gpsLoading = false;
         });
         return;
@@ -472,11 +451,126 @@ class _RegisterScreenState extends State<RegisterScreen> {
             onPressed: _submitting ? null : _submitRegistration,
             child: _submitting
                 ? const CircularProgressIndicator(color: Colors.white)
-                : const Text(
-                    'Complete Registration',
-                    style: TextStyle(fontSize: 16),
-                  ),
+                : const Text('Complete Registration', style: TextStyle(fontSize: 16)),
           ),
+        ),
+      ],
+    );
+  }
+
+  // ── STEP 5: Email Confirmation (static — no form) ─────────
+  Widget _buildStep5Confirm() {
+    final email = _emailCtrl.text.trim();
+    return Column(
+      children: [
+        const SizedBox(height: 20),
+        Container(
+          width: 80,
+          height: 80,
+          decoration: BoxDecoration(
+            color: const Color(0xFFF0FDF4),
+            borderRadius: BorderRadius.circular(40),
+            border: Border.all(color: const Color(0xFF16A34A), width: 2),
+          ),
+          child: const Icon(Icons.mark_email_unread_outlined,
+              size: 40, color: Color(0xFF16A34A)),
+        ),
+        const SizedBox(height: 24),
+        const Text(
+          'Check your email!',
+          style: TextStyle(
+            fontSize: 22,
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF1C3A28),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Text(
+          'A confirmation link has been sent to:',
+          style: TextStyle(color: Colors.grey.shade600),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 6),
+        Text(
+          email,
+          style: const TextStyle(
+            fontWeight: FontWeight.bold,
+            fontSize: 15,
+            color: Color(0xFF1C3A28),
+          ),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 20),
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFFF7ED),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFFEA580C)),
+          ),
+          child: const Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.info_outline, color: Color(0xFFEA580C), size: 18),
+                  SizedBox(width: 8),
+                  Text('What to do next:',
+                      style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFEA580C))),
+                ],
+              ),
+              SizedBox(height: 8),
+              Text('1. Open your email app', style: TextStyle(fontSize: 13)),
+              SizedBox(height: 4),
+              Text('2. Find the email from Benguet Harvest', style: TextStyle(fontSize: 13)),
+              SizedBox(height: 4),
+              Text('3. Tap "Confirm your email"', style: TextStyle(fontSize: 13)),
+              SizedBox(height: 4),
+              Text('4. Come back here and log in', style: TextStyle(fontSize: 13)),
+            ],
+          ),
+        ),
+        const SizedBox(height: 24),
+        SizedBox(
+          width: double.infinity,
+          child: ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF1C3A28),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 14),
+            ),
+            icon: const Icon(Icons.login),
+            label: const Text('Go to Log In', style: TextStyle(fontSize: 15)),
+            onPressed: () => Navigator.of(context).pop('registered'),
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextButton.icon(
+          icon: const Icon(Icons.refresh, color: Color(0xFF2D5A3D), size: 16),
+          label: const Text('Resend confirmation email',
+              style: TextStyle(color: Color(0xFF2D5A3D))),
+          onPressed: () async {
+            try {
+              await AuthService.resendConfirmation(email);
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Confirmation email resent!'),
+                    backgroundColor: Color(0xFF16A34A),
+                  ),
+                );
+              }
+            } catch (_) {
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Could not resend. Please try again.'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              }
+            }
+          },
         ),
       ],
     );
@@ -496,21 +590,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return;
     }
 
-    setState(() {
-      _submitting = true;
-      _errorMessage = null;
-    });
+    setState(() { _submitting = true; _errorMessage = null; });
     try {
-      await AuthService.register(
+      await AuthService.registerWithEmail(
         name: _nameCtrl.text.trim(),
         barangay: _barangay,
-        phone: _phoneCtrl.text.trim(),
+        email: _emailCtrl.text.trim(),
         pin: pin1,
         cropsGrown: _selectedCrops.toList(),
         latitude: _latitude,
         longitude: _longitude,
       );
-      if (mounted) Navigator.of(context).pop('registered');
+      if (mounted) setState(() { _step = 5; _submitting = false; });
     } catch (e) {
       setState(() {
         _submitting = false;
@@ -519,7 +610,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
   }
 
-  // Reusable Next button
   Widget _nextButton(String label, VoidCallback onPressed) {
     return SizedBox(
       width: double.infinity,
@@ -529,8 +619,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
           foregroundColor: Colors.white,
           padding: const EdgeInsets.symmetric(vertical: 14),
         ),
-        onPressed: onPressed,
-        child: Text(label, style: const TextStyle(fontSize: 15)),
+        onPressed: _submitting ? null : onPressed,
+        child: _submitting
+            ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+              )
+            : Text(label, style: const TextStyle(fontSize: 15)),
       ),
     );
   }

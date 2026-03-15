@@ -46,6 +46,16 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  msix: ^3.16.7
 
 flutter:
   uses-material-design: true
+
+msix_config:
+  display_name: Benguet Harvest
+  publisher_display_name: Benguet Harvest
+  identity_name: com.benguetharvest.app
+  msix_version: 1.0.0.0
+  description: Market prices, road conditions and supply tracking for Benguet farmers
+  languages: en-us
+  capabilities: 'internetClient, location'

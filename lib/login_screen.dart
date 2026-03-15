@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' show AuthException;
 import 'auth_service.dart';
 import 'biometric_service.dart';
 
@@ -10,7 +11,7 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final _phoneCtrl = TextEditingController();
+  final _emailCtrl = TextEditingController();
   final _pinCtrl   = TextEditingController();
 
   bool    _isLoading       = false;
@@ -36,7 +37,7 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   void dispose() {
     _lockTimer?.cancel();
-    _phoneCtrl.dispose();
+    _emailCtrl.dispose();
     _pinCtrl.dispose();
     super.dispose();
   }
@@ -93,11 +94,11 @@ class _LoginScreenState extends State<LoginScreen> {
   Future<void> _attemptLogin() async {
     if (_isLocked) return;
 
-    final phone = _phoneCtrl.text.trim();
+    final email = _emailCtrl.text.trim();
     final pin   = _pinCtrl.text.trim();
 
-    if (phone.length < 11) {
-      setState(() => _errorMsg = 'Enter your 11-digit mobile number.');
+    if (!email.contains('@') || !email.contains('.')) {
+      setState(() => _errorMsg = 'Enter a valid email address.');
       return;
     }
     if (pin.length != 6) {
@@ -108,7 +109,7 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() { _isLoading = true; _errorMsg = null; });
 
     try {
-      final farmer = await AuthService.login(phone: phone, pin: pin);
+      final farmer = await AuthService.loginWithEmail(email: email, pin: pin);
 
       if (farmer != null) {
         if (mounted) Navigator.of(context).pop('logged_in');
@@ -123,11 +124,18 @@ class _LoginScreenState extends State<LoginScreen> {
         } else {
           setState(() {
             _isLoading = false;
-            _errorMsg  = 'Incorrect phone number or PIN. '
+            _errorMsg  = 'Incorrect email or PIN. '
                 '${3 - _failedAttempts} attempt(s) remaining.';
           });
         }
       }
+    } on AuthException catch (e) {
+      setState(() {
+        _isLoading = false;
+        _errorMsg  = e.message.contains('confirmed')
+            ? 'Please confirm your email first. Check your inbox.'
+            : 'Incorrect email or PIN.';
+      });
     } catch (e) {
       setState(() {
         _isLoading = false;
@@ -226,19 +234,20 @@ class _LoginScreenState extends State<LoginScreen> {
               fontSize: 26,
               fontWeight: FontWeight.bold,
               color: Color(0xFF1C3A28))),
-          const Text('Enter your mobile number and PIN.',
+          const Text('Enter your email and PIN.',
             style: TextStyle(color: Colors.grey)),
           const SizedBox(height: 32),
 
-          // Phone field
+          // Email field
           TextField(
-            controller: _phoneCtrl,
-            keyboardType: TextInputType.phone,
+            controller: _emailCtrl,
+            keyboardType: TextInputType.emailAddress,
+            autocorrect: false,
             enabled: !_isLocked,
             decoration: const InputDecoration(
-              labelText: 'Mobile Number',
-              hintText: '09XXXXXXXXX',
-              prefixIcon: Icon(Icons.phone_outlined),
+              labelText: 'Email Address',
+              hintText: 'you@example.com',
+              prefixIcon: Icon(Icons.email_outlined),
               border: OutlineInputBorder(),
               filled: true,
               fillColor: Colors.white,

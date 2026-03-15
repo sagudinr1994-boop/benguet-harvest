@@ -2,6 +2,12 @@ import 'package:bcrypt/bcrypt.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+// ─── Email-based auth (Supabase Auth) ────────────────────────────────────────
+// New users register with email + PIN.
+// Supabase Auth sends a confirmation email; user confirms once then logs in.
+// Existing phone-based users are unaffected (biometric still works).
+// ─────────────────────────────────────────────────────────────────────────────
+
 class AuthService {
   static const String _farmerIdKey = 'farmer_id';
   static const String _loggedInKey = 'logged_in';
@@ -25,6 +31,116 @@ class AuthService {
         .eq('phone', phone)
         .maybeSingle();
     return data != null;
+  }
+
+  static Future<bool> emailExists(String email) async {
+    final data = await Supabase.instance.client
+        .from('farmers')
+        .select('id')
+        .eq('email', email.trim().toLowerCase())
+        .maybeSingle();
+    return data != null;
+  }
+
+  // ── EMAIL REGISTRATION (Supabase Auth) ───────────────────────────────────
+
+  /// Creates a Supabase Auth user (sends confirmation email) then inserts the
+  /// farmers row. Returns farmer data. Does NOT mark logged_in = true — the
+  /// user must confirm their email then log in.
+  static Future<Map<String, dynamic>> registerWithEmail({
+    required String name,
+    required String barangay,
+    required String email,
+    required String pin,
+    required List<String> cropsGrown,
+    double? latitude,
+    double? longitude,
+  }) async {
+    final authResponse = await Supabase.instance.client.auth.signUp(
+      email: email.trim().toLowerCase(),
+      password: pin,
+    );
+    if (authResponse.user == null) throw Exception('Auth signup failed');
+
+    final pinHash = hashPin(pin);
+    final farmerData = await Supabase.instance.client
+        .from('farmers')
+        .insert({
+          'name': name,
+          'barangay': barangay,
+          'email': email.trim().toLowerCase(),
+          'auth_id': authResponse.user!.id,
+          'pin_hash': pinHash,
+          'crops_grown': cropsGrown,
+          'latitude': latitude,
+          'longitude': longitude,
+        })
+        .select('id, role')
+        .single();
+
+    return farmerData;
+  }
+
+  // ── EMAIL LOGIN (Supabase Auth) ────────────────────────────────────────────
+
+  /// Signs in with email + PIN via Supabase Auth, then fetches the farmer row.
+  /// Throws [AuthException] on bad credentials or unconfirmed email.
+  static Future<Map<String, dynamic>?> loginWithEmail({
+    required String email,
+    required String pin,
+  }) async {
+    final authResponse = await Supabase.instance.client.auth.signInWithPassword(
+      email: email.trim().toLowerCase(),
+      password: pin,
+    );
+    if (authResponse.session == null) return null;
+
+    final data = await Supabase.instance.client
+        .from('farmers')
+        .select()
+        .eq('auth_id', authResponse.user!.id)
+        .maybeSingle();
+    if (data == null) return null;
+
+    await saveLocalFarmerId(data['id'] as String);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_roleKey, data['role'] as String? ?? 'farmer');
+    await _setLoggedIn(true);
+    return data;
+  }
+
+  // ── CHANGE PIN (email-auth users) ─────────────────────────────────────────
+
+  static Future<bool> changePinEmail({
+    required String farmerId,
+    required String currentPin,
+    required String newPin,
+  }) async {
+    final data = await Supabase.instance.client
+        .from('farmers')
+        .select('pin_hash')
+        .eq('id', farmerId)
+        .single();
+    final storedHash = data['pin_hash'] as String? ?? '';
+    if (!verifyPin(currentPin, storedHash)) return false;
+
+    await Supabase.instance.client.auth.updateUser(
+      UserAttributes(password: newPin),
+    );
+    await Supabase.instance.client
+        .from('farmers')
+        .update({'pin_hash': hashPin(newPin)})
+        .eq('id', farmerId);
+    return true;
+  }
+
+  // ── RESEND CONFIRMATION EMAIL ─────────────────────────────────────────────
+
+  static Future<void> resendConfirmation(String email) async {
+    await Supabase.instance.client.auth.resend(
+      type: OtpType.signup,
+      email: email.trim().toLowerCase(),
+    );
   }
 
   static Future<String> register({
